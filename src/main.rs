@@ -1,6 +1,11 @@
+/// Rust guideline compliant 2026-06-17
 use clap::{Parser, Subcommand};
-use rust_okf::{load_bundle, open_index, serve_http, AppConfig, FastEmbedProvider, MockEmbeddingProvider, SearchMode};
+use rust_okf::{
+    load_bundle, open_index, serve_http, AppConfig, FastEmbedProvider, MockEmbeddingProvider,
+    SearchMode,
+};
 use std::path::PathBuf;
+use tracing::info;
 
 #[derive(Parser)]
 #[command(name = "rust-okf")]
@@ -22,8 +27,12 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     InitConfig,
-    Add { bundle: PathBuf },
-    Update { bundle: PathBuf },
+    Add {
+        bundle: PathBuf,
+    },
+    Update {
+        bundle: PathBuf,
+    },
     Delete {
         #[arg(long)]
         logical_key: Vec<String>,
@@ -53,10 +62,13 @@ fn provider_from_cli(mock: bool) -> anyhow::Result<Box<dyn rust_okf::EmbeddingPr
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
     let cli = Cli::parse();
     if matches!(cli.command, Commands::InitConfig) {
         AppConfig::save_default(&cli.config)?;
-        println!("wrote default config to {}", cli.config.display());
+        info!(config = %cli.config.display(), "wrote default config");
         return Ok(());
     }
 
@@ -70,21 +82,24 @@ async fn main() -> anyhow::Result<()> {
         Commands::Add { bundle } => {
             let docs = load_bundle(&bundle)?;
             index.index_documents(docs)?;
-            println!("indexed bundle {}", bundle.display());
+            info!(bundle = %bundle.display(), "indexed bundle");
         }
         Commands::Update { bundle } => {
             let docs = load_bundle(&bundle)?;
             index.update_documents(docs)?;
-            println!("updated bundle {}", bundle.display());
+            info!(bundle = %bundle.display(), "updated bundle");
         }
-        Commands::Delete { logical_key, doc_id } => {
+        Commands::Delete {
+            logical_key,
+            doc_id,
+        } => {
             if !logical_key.is_empty() {
                 index.delete_logical_keys(&logical_key)?;
             }
             if !doc_id.is_empty() {
                 index.delete_doc_ids(&doc_id)?;
             }
-            println!("applied deletions");
+            info!(logical_keys = ?logical_key, doc_ids = ?doc_id, "applied deletions");
         }
         Commands::Search { query, mode, top_k } => {
             let mode = match mode.as_str() {
@@ -98,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Serve { bind } => {
             let bind = bind.unwrap_or(config.bind);
+            info!(bind = %bind, "starting http server");
             serve_http(index, bind).await?;
         }
         Commands::InitConfig => {}

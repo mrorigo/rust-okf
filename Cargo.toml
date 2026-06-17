@@ -29,6 +29,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 http = "1"
 fastembed = "5"
 utoipa = { version = "5", features = ["axum_extras"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 [dev-dependencies]
 assert_cmd = "2"

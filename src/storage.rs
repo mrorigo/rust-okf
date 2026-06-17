@@ -1,3 +1,4 @@
+/// Rust guideline compliant 2026-06-17
 use crate::bm25::{Bm25Config, Bm25Index};
 use crate::okf::OkfDocument;
 use crate::query::SearchResult;
@@ -9,9 +10,12 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// On-disk index format version.
 pub const INDEX_FORMAT_VERSION: u32 = 3;
+/// Magic bytes identifying a segment file.
 pub const SEGMENT_MAGIC: &[u8; 8] = b"OKFSEG03";
 
+/// Manifest describing the current index state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub format_version: u32,
@@ -23,6 +27,7 @@ pub struct Manifest {
     pub tombstones: Vec<String>,
 }
 
+/// Manifest entry for a single immutable segment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentEntry {
     pub segment_id: String,
@@ -31,6 +36,7 @@ pub struct SegmentEntry {
     pub created_at: u64,
 }
 
+/// Deserialized segment payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentFile {
     pub segment_id: String,
@@ -40,6 +46,7 @@ pub struct SegmentFile {
     pub embeddings: Vec<Vec<f32>>,
 }
 
+/// Per-segment summary metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentMetadata {
     pub doc_count: usize,
@@ -48,6 +55,7 @@ pub struct SegmentMetadata {
     pub created_at: u64,
 }
 
+/// Read-only access to a loaded segment.
 pub trait SegmentReader {
     fn metadata(&self) -> &SegmentMetadata;
     fn documents(&self) -> &[OkfDocument];
@@ -70,21 +78,25 @@ impl SegmentReader for SegmentFile {
     }
 }
 
+/// File-backed storage for manifests and segments.
 pub struct IndexStorage {
     root: PathBuf,
 }
 
 impl IndexStorage {
+    /// Opens or creates the index root directory.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
         fs::create_dir_all(root.join("segments"))?;
         Ok(Self { root })
     }
 
+    /// Returns the manifest file path.
     pub fn manifest_path(&self) -> PathBuf {
         self.root.join("manifest.json")
     }
 
+    /// Loads the manifest from disk.
     pub fn load_manifest(&self) -> Result<Manifest> {
         let path = self.manifest_path();
         if !path.exists() {
@@ -101,6 +113,7 @@ impl IndexStorage {
         Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
     }
 
+    /// Saves the manifest atomically.
     pub fn save_manifest(&self, manifest: &Manifest) -> Result<()> {
         let tmp = self.root.join("manifest.json.tmp");
         fs::write(&tmp, serde_json::to_string_pretty(manifest)?)?;
@@ -108,8 +121,12 @@ impl IndexStorage {
         Ok(())
     }
 
+    /// Writes a segment to disk.
     pub fn write_segment(&self, segment: &SegmentFile) -> Result<SegmentEntry> {
-        let staging_dir = self.root.join("segments").join(format!("{}.staging", segment.segment_id));
+        let staging_dir = self
+            .root
+            .join("segments")
+            .join(format!("{}.staging", segment.segment_id));
         let final_dir = self.root.join("segments").join(&segment.segment_id);
         if staging_dir.exists() {
             fs::remove_dir_all(&staging_dir)?;
@@ -127,10 +144,12 @@ impl IndexStorage {
         })
     }
 
+    /// Loads a segment from disk.
     pub fn read_segment(&self, entry: &SegmentEntry) -> Result<SegmentFile> {
         read_segment_bin(Path::new(&entry.path).join("segment.bin"))
     }
 
+    /// Returns the index root directory.
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -204,16 +223,26 @@ fn write_u32(buf: &mut Vec<u8>, v: u32) {
 
 fn read_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32> {
     let end = *cursor + 4;
-    let slice = bytes.get(*cursor..end).ok_or_else(|| anyhow!("unexpected eof"))?;
+    let slice = bytes
+        .get(*cursor..end)
+        .ok_or_else(|| anyhow!("unexpected eof"))?;
     *cursor = end;
-    Ok(u32::from_le_bytes(slice.try_into().unwrap()))
+    let array: [u8; 4] = slice
+        .try_into()
+        .map_err(|_| anyhow!("invalid u32 encoding"))?;
+    Ok(u32::from_le_bytes(array))
 }
 
 fn read_u64(bytes: &[u8], cursor: &mut usize) -> Result<u64> {
     let end = *cursor + 8;
-    let slice = bytes.get(*cursor..end).ok_or_else(|| anyhow!("unexpected eof"))?;
+    let slice = bytes
+        .get(*cursor..end)
+        .ok_or_else(|| anyhow!("unexpected eof"))?;
     *cursor = end;
-    Ok(u64::from_le_bytes(slice.try_into().unwrap()))
+    let array: [u8; 8] = slice
+        .try_into()
+        .map_err(|_| anyhow!("invalid u64 encoding"))?;
+    Ok(u64::from_le_bytes(array))
 }
 
 fn push_string(pool: &mut Vec<u8>, s: Option<&str>) -> (u32, u32) {
@@ -228,7 +257,7 @@ fn push_string(pool: &mut Vec<u8>, s: Option<&str>) -> (u32, u32) {
     }
 }
 
-fn read_string<'a>(pool: &'a [u8], off: u32, len: u32) -> Option<&'a str> {
+fn read_string(pool: &[u8], off: u32, len: u32) -> Option<&str> {
     if off == u32::MAX {
         return None;
     }
@@ -242,7 +271,11 @@ fn write_segment_bin(path: &Path, segment: &SegmentFile) -> Result<()> {
 
     for (i, doc) in segment.documents.iter().enumerate() {
         doc_offsets.insert(doc.doc_id.clone(), i as u32);
-        let tags = if doc.tags.is_empty() { None } else { Some(doc.tags.join("\n")) };
+        let tags = if doc.tags.is_empty() {
+            None
+        } else {
+            Some(doc.tags.join("\n"))
+        };
         let searchable = Some(doc.searchable_text.as_str());
         let entries = [
             push_string(&mut strings, Some(&doc.logical_key)),
@@ -259,7 +292,8 @@ fn write_segment_bin(path: &Path, segment: &SegmentFile) -> Result<()> {
             push_string(&mut strings, Some(&doc.body)),
             push_string(&mut strings, searchable),
         ];
-        let [logical, bundle, concept, file, doc_id, type_name, title, description, resource, timestamp, tags, body, searchable] = entries;
+        let [logical, bundle, concept, file, doc_id, type_name, title, description, resource, timestamp, tags, body, searchable] =
+            entries;
         docs.push(DocEntry {
             logical_key_off: logical.0,
             logical_key_len: logical.1,
@@ -294,8 +328,13 @@ fn write_segment_bin(path: &Path, segment: &SegmentFile) -> Result<()> {
     for (term, postings) in &segment.bm25.postings {
         let mut list = Vec::new();
         for (doc_id, tf) in postings {
-            let idx = *doc_offsets.get(doc_id).ok_or_else(|| anyhow!("missing doc id"))?;
-            list.push(PostingEntry { doc_index: idx, tf: *tf as u32 });
+            let idx = *doc_offsets
+                .get(doc_id)
+                .ok_or_else(|| anyhow!("missing doc id"))?;
+            list.push(PostingEntry {
+                doc_index: idx,
+                tf: *tf as u32,
+            });
         }
         list.sort_by_key(|p| p.doc_index);
         term_map.push((term.clone(), list));
@@ -357,7 +396,11 @@ fn write_segment_bin(path: &Path, segment: &SegmentFile) -> Result<()> {
     header.postings_offset = postings_offset;
     header.vectors_offset = vectors_offset;
 
-    let mut file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)?;
     file.write_all(SEGMENT_MAGIC)?;
     file.write_all(&INDEX_FORMAT_VERSION.to_le_bytes())?;
     file.write_all(&header.doc_count.to_le_bytes())?;
@@ -431,7 +474,12 @@ fn write_doc_entry(file: &mut File, doc: &DocEntry) -> Result<()> {
 }
 
 fn write_term_entry(file: &mut File, term: &TermEntry) -> Result<()> {
-    for v in [term.term_off, term.term_len, term.postings_off, term.postings_len] {
+    for v in [
+        term.term_off,
+        term.term_len,
+        term.postings_off,
+        term.postings_len,
+    ] {
         file.write_all(&v.to_le_bytes())?;
     }
     Ok(())
@@ -439,7 +487,7 @@ fn write_term_entry(file: &mut File, term: &TermEntry) -> Result<()> {
 
 fn read_segment_bin(path: PathBuf) -> Result<SegmentFile> {
     let file = File::open(path)?;
-    let mmap = unsafe { Mmap::map(&file)? };
+    let mmap = map_file(&file)?;
     let mut cursor = 0usize;
     if mmap.get(0..8) != Some(SEGMENT_MAGIC.as_slice()) {
         return Err(anyhow!("invalid segment magic"));
@@ -470,11 +518,24 @@ fn read_segment_bin(path: PathBuf) -> Result<SegmentFile> {
         vectors_len: read_u64(&mmap, &mut cursor)?,
     };
 
-    let docs_bytes = mmap.get(header.docs_offset as usize..(header.docs_offset + header.docs_len) as usize).ok_or_else(|| anyhow!("bad docs section"))?;
-    let strings = mmap.get(header.strings_offset as usize..(header.strings_offset + header.strings_len) as usize).ok_or_else(|| anyhow!("bad strings section"))?;
-    let terms_bytes = mmap.get(header.terms_offset as usize..(header.terms_offset + header.terms_len) as usize).ok_or_else(|| anyhow!("bad terms section"))?;
-    let postings_bytes = mmap.get(header.postings_offset as usize..(header.postings_offset + header.postings_len) as usize).ok_or_else(|| anyhow!("bad postings section"))?;
-    let vectors_bytes = mmap.get(header.vectors_offset as usize..(header.vectors_offset + header.vectors_len) as usize).ok_or_else(|| anyhow!("bad vectors section"))?;
+    let docs_bytes = mmap
+        .get(header.docs_offset as usize..(header.docs_offset + header.docs_len) as usize)
+        .ok_or_else(|| anyhow!("bad docs section"))?;
+    let strings = mmap
+        .get(header.strings_offset as usize..(header.strings_offset + header.strings_len) as usize)
+        .ok_or_else(|| anyhow!("bad strings section"))?;
+    let terms_bytes = mmap
+        .get(header.terms_offset as usize..(header.terms_offset + header.terms_len) as usize)
+        .ok_or_else(|| anyhow!("bad terms section"))?;
+    let postings_bytes = mmap
+        .get(
+            header.postings_offset as usize
+                ..(header.postings_offset + header.postings_len) as usize,
+        )
+        .ok_or_else(|| anyhow!("bad postings section"))?;
+    let vectors_bytes = mmap
+        .get(header.vectors_offset as usize..(header.vectors_offset + header.vectors_len) as usize)
+        .ok_or_else(|| anyhow!("bad vectors section"))?;
 
     let mut docs = Vec::with_capacity(doc_count);
     let mut doc_cursor = 0usize;
@@ -511,19 +572,38 @@ fn read_segment_bin(path: PathBuf) -> Result<SegmentFile> {
             .map(|s| s.split('\n').map(str::to_string).collect())
             .unwrap_or_default();
         let doc = OkfDocument {
-            logical_key: read_string(strings, entry.logical_key_off, entry.logical_key_len).unwrap_or_default().to_string(),
-            bundle_path: read_string(strings, entry.bundle_path_off, entry.bundle_path_len).unwrap_or_default().to_string(),
-            concept_path: read_string(strings, entry.concept_path_off, entry.concept_path_len).unwrap_or_default().to_string(),
-            file_path: read_string(strings, entry.file_path_off, entry.file_path_len).unwrap_or_default().to_string(),
-            doc_id: read_string(strings, entry.doc_id_off, entry.doc_id_len).unwrap_or_default().to_string(),
-            type_name: read_string(strings, entry.type_name_off, entry.type_name_len).unwrap_or_default().to_string(),
+            logical_key: read_string(strings, entry.logical_key_off, entry.logical_key_len)
+                .unwrap_or_default()
+                .to_string(),
+            bundle_path: read_string(strings, entry.bundle_path_off, entry.bundle_path_len)
+                .unwrap_or_default()
+                .to_string(),
+            concept_path: read_string(strings, entry.concept_path_off, entry.concept_path_len)
+                .unwrap_or_default()
+                .to_string(),
+            file_path: read_string(strings, entry.file_path_off, entry.file_path_len)
+                .unwrap_or_default()
+                .to_string(),
+            doc_id: read_string(strings, entry.doc_id_off, entry.doc_id_len)
+                .unwrap_or_default()
+                .to_string(),
+            type_name: read_string(strings, entry.type_name_off, entry.type_name_len)
+                .unwrap_or_default()
+                .to_string(),
             title: read_string(strings, entry.title_off, entry.title_len).map(str::to_string),
-            description: read_string(strings, entry.description_off, entry.description_len).map(str::to_string),
-            resource: read_string(strings, entry.resource_off, entry.resource_len).map(str::to_string),
+            description: read_string(strings, entry.description_off, entry.description_len)
+                .map(str::to_string),
+            resource: read_string(strings, entry.resource_off, entry.resource_len)
+                .map(str::to_string),
             tags,
-            timestamp: read_string(strings, entry.timestamp_off, entry.timestamp_len).map(str::to_string),
-            body: read_string(strings, entry.body_off, entry.body_len).unwrap_or_default().to_string(),
-            searchable_text: read_string(strings, entry.searchable_off, entry.searchable_len).unwrap_or_default().to_string(),
+            timestamp: read_string(strings, entry.timestamp_off, entry.timestamp_len)
+                .map(str::to_string),
+            body: read_string(strings, entry.body_off, entry.body_len)
+                .unwrap_or_default()
+                .to_string(),
+            searchable_text: read_string(strings, entry.searchable_off, entry.searchable_len)
+                .unwrap_or_default()
+                .to_string(),
         };
         docs.push(doc);
     }
@@ -545,16 +625,24 @@ fn read_segment_bin(path: PathBuf) -> Result<SegmentFile> {
             postings_off: read_u32(terms_bytes, &mut term_cursor)? as u32,
             postings_len: read_u32(terms_bytes, &mut term_cursor)? as u32,
         };
-        let term = read_string(strings, entry.term_off, entry.term_len).unwrap_or_default().to_string();
+        let term = read_string(strings, entry.term_off, entry.term_len)
+            .unwrap_or_default()
+            .to_string();
         let mut postings = HashMap::new();
         let start = entry.postings_off as usize;
         let end = (entry.postings_off + entry.postings_len) as usize;
-        let slice = postings_bytes.get(start..end).ok_or_else(|| anyhow!("bad postings slice"))?;
+        let slice = postings_bytes
+            .get(start..end)
+            .ok_or_else(|| anyhow!("bad postings slice"))?;
         let mut pcur = 0usize;
         while pcur < slice.len() {
             let doc_index = read_u32(slice, &mut pcur)? as usize;
             let tf = read_u32(slice, &mut pcur)? as usize;
-            let doc_id = docs.get(doc_index).ok_or_else(|| anyhow!("bad doc index"))?.doc_id.clone();
+            let doc_id = docs
+                .get(doc_index)
+                .ok_or_else(|| anyhow!("bad doc index"))?
+                .doc_id
+                .clone();
             *postings.entry(doc_id).or_insert(0) += tf;
         }
         bm25.term_doc_freq.insert(term.clone(), postings.len());
@@ -566,15 +654,24 @@ fn read_segment_bin(path: PathBuf) -> Result<SegmentFile> {
         bm25.doc_len.insert(doc.doc_id.clone(), len);
         total_len += len;
     }
-    bm25.avg_doc_len = if docs.is_empty() { 0.0 } else { total_len as f32 / docs.len() as f32 };
+    bm25.avg_doc_len = if docs.is_empty() {
+        0.0
+    } else {
+        total_len as f32 / docs.len() as f32
+    };
 
     let mut embeddings = Vec::with_capacity(doc_count);
     let mut vcur = 0usize;
     for _ in 0..doc_count {
         let mut vec = Vec::with_capacity(vector_dim);
         for _ in 0..vector_dim {
-            let bytes = vectors_bytes.get(vcur..vcur + 4).ok_or_else(|| anyhow!("bad vector slice"))?;
-            vec.push(f32::from_le_bytes(bytes.try_into().unwrap()));
+            let bytes = vectors_bytes
+                .get(vcur..vcur + 4)
+                .ok_or_else(|| anyhow!("bad vector slice"))?;
+            let array: [u8; 4] = bytes
+                .try_into()
+                .map_err(|_| anyhow!("invalid f32 encoding"))?;
+            vec.push(f32::from_le_bytes(array));
             vcur += 4;
         }
         embeddings.push(vec);
@@ -594,6 +691,7 @@ fn read_segment_bin(path: PathBuf) -> Result<SegmentFile> {
     })
 }
 
+/// Extracts a short snippet for display in search results.
 pub fn snippet_from_doc(doc: &OkfDocument, query: &str) -> String {
     let lowered = query.to_lowercase();
     let body = &doc.body;
@@ -605,6 +703,7 @@ pub fn snippet_from_doc(doc: &OkfDocument, query: &str) -> String {
     body.chars().take(160).collect()
 }
 
+/// Converts indexed documents back into API search results.
 pub fn results_from_docs(
     docs: &[OkfDocument],
     bm25: &HashMap<String, f32>,
@@ -633,4 +732,18 @@ pub fn results_from_docs(
             })
         })
         .collect()
+}
+
+/// Maps a file into memory.
+///
+/// # Safety
+///
+/// The returned mapping is read-only and the file handle remains alive for the
+/// duration of the map construction. The mapping is only used for immutable
+/// reads of a segment file written by this crate.
+fn map_file(file: &File) -> Result<Mmap> {
+    // SAFETY: The mapping is read-only, the file is not mutated through this
+    // handle, and the returned `Mmap` owns the mapping after construction.
+    let mmap = unsafe { Mmap::map(file)? };
+    Ok(mmap)
 }

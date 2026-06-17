@@ -1,7 +1,9 @@
+/// Rust guideline compliant 2026-06-17
 use crate::query::{QueryPlan, SearchResult};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// Search mode requested by API clients.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchModeRequest {
@@ -10,6 +12,7 @@ pub enum SearchModeRequest {
     Hybrid,
 }
 
+/// Search request payload.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SearchRequest {
     pub query: String,
@@ -19,12 +22,14 @@ pub struct SearchRequest {
     pub top_k: Option<usize>,
 }
 
+/// Search response payload.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SearchResponse {
     pub results: Vec<SearchResult>,
     pub plan: QueryPlan,
 }
 
+/// Document ingestion payload.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DocumentInput {
     pub bundle_path: String,
@@ -33,6 +38,7 @@ pub struct DocumentInput {
     pub body: String,
 }
 
+/// Delete request payload.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeleteRequest {
     #[serde(default)]
@@ -41,6 +47,7 @@ pub struct DeleteRequest {
     pub logical_keys: Vec<String>,
 }
 
+/// Simple status response payload.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct StatusResponse {
     pub status: String,

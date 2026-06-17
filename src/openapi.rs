@@ -1,6 +1,10 @@
-use crate::schema::{DeleteRequest, DocumentInput, SearchRequest, SearchResponse, SearchModeRequest, StatusResponse};
+/// Rust guideline compliant 2026-06-17
+use crate::schema::{
+    DeleteRequest, DocumentInput, SearchModeRequest, SearchRequest, SearchResponse, StatusResponse,
+};
 use utoipa::OpenApi;
 
+/// OpenAPI document for the HTTP API.
 #[derive(OpenApi)]
 #[openapi(
     paths(

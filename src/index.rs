@@ -1,3 +1,4 @@
+/// Rust guideline compliant 2026-06-17
 use crate::bm25::{Bm25Config, Bm25Index};
 use crate::embedding::EmbeddingProvider;
 use crate::okf::OkfDocument;
@@ -9,9 +10,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Index-level tuning parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexConfig {
+    /// BM25 configuration.
     pub bm25: Bm25Config,
+    /// Reciprocal Rank Fusion constant.
     pub rrf_k: f32,
 }
 
@@ -24,6 +28,7 @@ impl Default for IndexConfig {
     }
 }
 
+/// Search mode for the public API.
 #[derive(Debug, Clone, Copy)]
 pub enum SearchMode {
     Lexical,
@@ -31,12 +36,14 @@ pub enum SearchMode {
     Hybrid,
 }
 
+/// Indexing and search errors.
 #[derive(Debug, thiserror::Error)]
 pub enum IndexError {
     #[error("{0}")]
     Message(String),
 }
 
+/// Main index handle.
 pub struct Index {
     storage: IndexStorage,
     manifest: Manifest,
@@ -46,7 +53,24 @@ pub struct Index {
 }
 
 impl Index {
-    pub fn open(path: impl Into<PathBuf>, embedding_provider: Box<dyn EmbeddingProvider>) -> Result<Self> {
+    /// Opens an index from disk.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Index root path.
+    /// * `embedding_provider` - Embedding backend used for vector search.
+    ///
+    /// # Returns
+    ///
+    /// A loaded index instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the manifest or any segment cannot be read.
+    pub fn open(
+        path: impl Into<PathBuf>,
+        embedding_provider: Box<dyn EmbeddingProvider>,
+    ) -> Result<Self> {
         let storage = IndexStorage::open(path)?;
         let manifest = storage.load_manifest()?;
         let mut segments = Vec::new();
@@ -62,10 +86,12 @@ impl Index {
         })
     }
 
+    /// Returns the current manifest snapshot.
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
     }
 
+    /// Indexes a batch of documents as a new immutable segment.
     pub fn index_documents(&mut self, docs: Vec<OkfDocument>) -> Result<()> {
         if docs.is_empty() {
             return Ok(());
@@ -80,7 +106,10 @@ impl Index {
         }
         let texts: Vec<String> = docs.iter().map(|doc| doc.searchable_text.clone()).collect();
         let embeddings = self.embedding_provider.embed(&texts)?;
-        let pairs: Vec<(String, String)> = docs.iter().map(|d| (d.doc_id.clone(), d.searchable_text.clone())).collect();
+        let pairs: Vec<(String, String)> = docs
+            .iter()
+            .map(|d| (d.doc_id.clone(), d.searchable_text.clone()))
+            .collect();
         let bm25 = Bm25Index::build(&pairs, self.config.bm25.clone());
         let segment_id = format!("seg_{:016x}", now_nanos());
         let metadata = SegmentMetadata {
@@ -107,9 +136,15 @@ impl Index {
         Ok(())
     }
 
+    /// Tombstones document IDs.
     pub fn delete_doc_ids(&mut self, doc_ids: &[String]) -> Result<()> {
         for doc_id in doc_ids {
-            if !self.manifest.tombstones.iter().any(|existing| existing == doc_id) {
+            if !self
+                .manifest
+                .tombstones
+                .iter()
+                .any(|existing| existing == doc_id)
+            {
                 self.manifest.tombstones.push(doc_id.clone());
             }
         }
@@ -118,6 +153,7 @@ impl Index {
         Ok(())
     }
 
+    /// Tombstones documents by logical key.
     pub fn delete_logical_keys(&mut self, logical_keys: &[String]) -> Result<()> {
         let mut ids_to_delete = Vec::new();
         for segment in &self.segments {
@@ -130,15 +166,25 @@ impl Index {
         self.delete_doc_ids(&ids_to_delete)
     }
 
+    /// Replaces existing documents with new versions.
     pub fn update_documents(&mut self, docs: Vec<OkfDocument>) -> Result<()> {
         let logical_keys: Vec<String> = docs.iter().map(|d| d.logical_key.clone()).collect();
         self.delete_logical_keys(&logical_keys)?;
         self.index_documents(docs)
     }
 
-    pub fn search(&self, query: &str, mode: SearchMode, top_k: usize) -> Result<(Vec<SearchResult>, QueryPlan)> {
+    /// Searches the index.
+    pub fn search(
+        &self,
+        query: &str,
+        mode: SearchMode,
+        top_k: usize,
+    ) -> Result<(Vec<SearchResult>, QueryPlan)> {
         let query_embedding = if matches!(mode, SearchMode::Vector | SearchMode::Hybrid) {
-            self.embedding_provider.embed(&[query.to_string()])?.into_iter().next()
+            self.embedding_provider
+                .embed(&[query.to_string()])?
+                .into_iter()
+                .next()
         } else {
             None
         };
@@ -148,9 +194,19 @@ impl Index {
         let mut all_docs = Vec::new();
 
         for segment in &self.segments {
-            all_docs.extend(segment.documents.iter().cloned().filter(|doc| {
-                !self.manifest.tombstones.iter().any(|dead| dead == &doc.doc_id)
-            }));
+            all_docs.extend(
+                segment
+                    .documents
+                    .iter()
+                    .filter(|doc| {
+                        !self
+                            .manifest
+                            .tombstones
+                            .iter()
+                            .any(|dead| dead == &doc.doc_id)
+                    })
+                    .cloned(),
+            );
             if matches!(mode, SearchMode::Lexical | SearchMode::Hybrid) {
                 for (doc_id, score) in segment.bm25.score(query) {
                     if self.manifest.tombstones.iter().any(|dead| dead == &doc_id) {
@@ -160,7 +216,8 @@ impl Index {
                 }
             }
             if let Some(query_embedding) = &query_embedding {
-                let scores = cosine_scores(query_embedding, &segment.embeddings, &segment.documents);
+                let scores =
+                    cosine_scores(query_embedding, &segment.embeddings, &segment.documents);
                 for (doc_id, score) in scores {
                     if self.manifest.tombstones.iter().any(|dead| dead == &doc_id) {
                         continue;
@@ -190,6 +247,7 @@ impl Index {
         ))
     }
 
+    /// Indexes all documents in a bundle directory.
     pub fn add_bundle_dir(&mut self, bundle_dir: impl AsRef<Path>) -> Result<()> {
         let docs = crate::okf::load_bundle(bundle_dir.as_ref())?;
         self.update_documents(docs)
@@ -223,9 +281,16 @@ fn sort_scores(map: &HashMap<String, f32>) -> Vec<(String, f32)> {
 }
 
 fn now_nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
 }
 
-pub fn open_index(path: impl Into<PathBuf>, embedding_provider: Box<dyn EmbeddingProvider>) -> Result<Index> {
+/// Opens an index handle.
+pub fn open_index(
+    path: impl Into<PathBuf>,
+    embedding_provider: Box<dyn EmbeddingProvider>,
+) -> Result<Index> {
     Index::open(path, embedding_provider)
 }

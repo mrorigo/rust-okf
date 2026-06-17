@@ -1,8 +1,10 @@
+/// Rust guideline compliant 2026-06-17
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Normalized OKF document used by the indexer.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OkfDocument {
     pub logical_key: String,
@@ -20,6 +22,7 @@ pub struct OkfDocument {
     pub searchable_text: String,
 }
 
+/// Builder for constructing normalized OKF documents.
 #[derive(Default)]
 pub struct OkfDocumentBuilder {
     bundle_path: PathBuf,
@@ -29,6 +32,7 @@ pub struct OkfDocumentBuilder {
 }
 
 impl OkfDocumentBuilder {
+    /// Creates a new builder.
     pub fn new(bundle_path: impl Into<PathBuf>, file_path: impl Into<PathBuf>) -> Self {
         Self {
             bundle_path: bundle_path.into(),
@@ -37,16 +41,23 @@ impl OkfDocumentBuilder {
         }
     }
 
-    pub fn frontmatter_value(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
+    /// Adds a frontmatter key/value pair.
+    pub fn frontmatter_value(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<serde_json::Value>,
+    ) -> Self {
         self.frontmatter.insert(key.into(), value.into());
         self
     }
 
+    /// Sets the Markdown body.
     pub fn body(mut self, body: impl Into<String>) -> Self {
         self.body = body.into();
         self
     }
 
+    /// Builds the normalized document.
     pub fn build(self) -> OkfDocument {
         let concept_path = self
             .file_path
@@ -57,9 +68,21 @@ impl OkfDocumentBuilder {
             .trim_end_matches(".md")
             .replace(std::path::MAIN_SEPARATOR, "/");
 
-        let title = self.frontmatter.get("title").and_then(|v| v.as_str()).map(str::to_owned);
-        let description = self.frontmatter.get("description").and_then(|v| v.as_str()).map(str::to_owned);
-        let resource = self.frontmatter.get("resource").and_then(|v| v.as_str()).map(str::to_owned);
+        let title = self
+            .frontmatter
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let description = self
+            .frontmatter
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let resource = self
+            .frontmatter
+            .get("resource")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
         let tags = self
             .frontmatter
             .get("tags")
@@ -77,8 +100,13 @@ impl OkfDocumentBuilder {
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown")
             .to_owned();
-        let timestamp = self.frontmatter.get("timestamp").and_then(|v| v.as_str()).map(str::to_owned);
-        let searchable_text = build_searchable_text(title.as_deref(), description.as_deref(), &tags, &self.body);
+        let timestamp = self
+            .frontmatter
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let searchable_text =
+            build_searchable_text(title.as_deref(), description.as_deref(), &tags, &self.body);
         let doc_id = doc_id_for(&self.bundle_path, &self.file_path, &self.body);
         let logical_key = logical_key_for(&self.bundle_path, &concept_path);
 
@@ -100,7 +128,13 @@ impl OkfDocumentBuilder {
     }
 }
 
-pub fn build_searchable_text(title: Option<&str>, description: Option<&str>, tags: &[String], body: &str) -> String {
+/// Builds searchable text for lexical and vector indexing.
+pub fn build_searchable_text(
+    title: Option<&str>,
+    description: Option<&str>,
+    tags: &[String],
+    body: &str,
+) -> String {
     let mut parts = Vec::new();
     if let Some(title) = title {
         parts.push(title.to_string());
@@ -115,6 +149,7 @@ pub fn build_searchable_text(title: Option<&str>, description: Option<&str>, tag
     parts.join("\n")
 }
 
+/// Computes a stable document identifier.
 pub fn doc_id_for(bundle_path: &Path, file_path: &Path, body: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -126,6 +161,7 @@ pub fn doc_id_for(bundle_path: &Path, file_path: &Path, body: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Computes a stable logical key for update and delete routing.
 pub fn logical_key_for(bundle_path: &Path, concept_path: &str) -> String {
     format!(
         "{}::{}",
@@ -134,9 +170,13 @@ pub fn logical_key_for(bundle_path: &Path, concept_path: &str) -> String {
     )
 }
 
+/// Loads all Markdown documents from a bundle directory.
 pub fn load_bundle(bundle_dir: &Path) -> anyhow::Result<Vec<OkfDocument>> {
     let mut docs = Vec::new();
-    for entry in walkdir::WalkDir::new(bundle_dir).into_iter().filter_map(Result::ok) {
+    for entry in walkdir::WalkDir::new(bundle_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
         if !entry.file_type().is_file() {
             continue;
         }
@@ -154,7 +194,9 @@ pub fn load_bundle(bundle_dir: &Path) -> anyhow::Result<Vec<OkfDocument>> {
     Ok(docs)
 }
 
-fn split_frontmatter(content: &str) -> anyhow::Result<(HashMap<String, serde_json::Value>, String)> {
+fn split_frontmatter(
+    content: &str,
+) -> anyhow::Result<(HashMap<String, serde_json::Value>, String)> {
     if !content.starts_with("---\n") {
         return Ok((HashMap::new(), content.to_string()));
     }
@@ -190,13 +232,16 @@ fn serde_yaml_to_json(value: serde_yaml::Value) -> serde_json::Value {
             } else if let Some(u) = n.as_u64() {
                 serde_json::Value::Number(u.into())
             } else if let Some(f) = n.as_f64() {
-                serde_json::Number::from_f64(f).map_or(serde_json::Value::Null, serde_json::Value::Number)
+                serde_json::Number::from_f64(f)
+                    .map_or(serde_json::Value::Null, serde_json::Value::Number)
             } else {
                 serde_json::Value::Null
             }
         }
         serde_yaml::Value::String(s) => serde_json::Value::String(s),
-        serde_yaml::Value::Sequence(seq) => serde_json::Value::Array(seq.into_iter().map(serde_yaml_to_json).collect()),
+        serde_yaml::Value::Sequence(seq) => {
+            serde_json::Value::Array(seq.into_iter().map(serde_yaml_to_json).collect())
+        }
         _ => serde_json::Value::Null,
     }
 }

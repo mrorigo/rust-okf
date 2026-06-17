@@ -32,7 +32,12 @@ async fn health_and_search_routes_work() {
 
     let health = app
         .clone()
-        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(health.status(), StatusCode::OK);
@@ -43,7 +48,9 @@ async fn health_and_search_routes_work() {
                 .method("POST")
                 .uri("/search")
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"query":"orders","mode":"hybrid","top_k":5}"#))
+                .body(Body::from(
+                    r#"{"query":"orders","mode":"hybrid","top_k":5}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -57,7 +64,12 @@ async fn openapi_route_exposes_schema() {
         index: Arc::new(Mutex::new(build_index())),
     });
     let resp = app
-        .oneshot(Request::builder().uri("/openapi.json").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);

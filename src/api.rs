@@ -1,7 +1,10 @@
+/// Rust guideline compliant 2026-06-17
 use crate::embedding::FastEmbedProvider;
 use crate::index::{Index, SearchMode};
 use crate::okf::OkfDocumentBuilder;
-use crate::schema::{DeleteRequest, DocumentInput, SearchModeRequest, SearchRequest, SearchResponse, StatusResponse};
+use crate::schema::{
+    DeleteRequest, DocumentInput, SearchModeRequest, SearchRequest, SearchResponse, StatusResponse,
+};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
@@ -10,11 +13,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use utoipa::OpenApi;
 
+/// Shared HTTP API state.
 #[derive(Clone)]
 pub struct ApiState {
     pub index: Arc<Mutex<Index>>,
 }
 
+/// Builds the HTTP router.
 pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -34,7 +39,12 @@ pub fn router(state: ApiState) -> Router {
     )
 )]
 pub async fn health() -> (StatusCode, Json<StatusResponse>) {
-    (StatusCode::OK, Json(StatusResponse { status: "ok".to_string() }))
+    (
+        StatusCode::OK,
+        Json(StatusResponse {
+            status: "ok".to_string(),
+        }),
+    )
 }
 
 #[utoipa::path(
@@ -46,10 +56,8 @@ pub async fn health() -> (StatusCode, Json<StatusResponse>) {
 )]
 pub async fn openapi_json() -> (StatusCode, Json<serde_json::Value>) {
     let doc = crate::openapi::ApiDoc::openapi();
-    (
-        StatusCode::OK,
-        Json(serde_json::to_value(doc).unwrap_or_else(|_| serde_json::json!({}))),
-    )
+    let body = serde_json::to_value(doc).unwrap_or_else(|_| serde_json::json!({}));
+    (StatusCode::OK, Json(body))
 }
 
 #[utoipa::path(
@@ -69,18 +77,33 @@ pub async fn search(
         SearchModeRequest::Vector => SearchMode::Vector,
         SearchModeRequest::Hybrid => SearchMode::Hybrid,
     };
-    let index = state
-        .index
-        .lock()
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(StatusResponse { status: "index lock poisoned".to_string() })))?;
+    let index = state.index.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(StatusResponse {
+                status: "index lock poisoned".to_string(),
+            }),
+        )
+    })?;
     let (results, plan) = index
         .search(&req.query, mode, req.top_k.unwrap_or(10))
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, Json(StatusResponse { status: err.to_string() })))?;
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(StatusResponse {
+                    status: err.to_string(),
+                }),
+            )
+        })?;
     Ok(Json(SearchResponse { results, plan }))
 }
 
 fn build_document(doc: DocumentInput) -> crate::okf::OkfDocument {
-    let mut builder = OkfDocumentBuilder::new(PathBuf::from(&doc.bundle_path), PathBuf::from(&doc.file_path)).body(doc.body);
+    let mut builder = OkfDocumentBuilder::new(
+        PathBuf::from(&doc.bundle_path),
+        PathBuf::from(&doc.file_path),
+    )
+    .body(doc.body);
     for (k, v) in doc.frontmatter {
         builder = builder.frontmatter_value(k, v);
     }
@@ -100,14 +123,25 @@ pub async fn index_documents(
     Json(docs): Json<Vec<DocumentInput>>,
 ) -> Result<Json<StatusResponse>, (StatusCode, Json<StatusResponse>)> {
     let built = docs.into_iter().map(build_document).collect::<Vec<_>>();
-    let mut index = state
-        .index
-        .lock()
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(StatusResponse { status: "index lock poisoned".to_string() })))?;
-    index
-        .index_documents(built)
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, Json(StatusResponse { status: err.to_string() })))?;
-    Ok(Json(StatusResponse { status: "ok".to_string() }))
+    let mut index = state.index.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(StatusResponse {
+                status: "index lock poisoned".to_string(),
+            }),
+        )
+    })?;
+    index.index_documents(built).map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(StatusResponse {
+                status: err.to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(StatusResponse {
+        status: "ok".to_string(),
+    }))
 }
 
 #[utoipa::path(
@@ -123,14 +157,25 @@ pub async fn update_documents(
     Json(docs): Json<Vec<DocumentInput>>,
 ) -> Result<Json<StatusResponse>, (StatusCode, Json<StatusResponse>)> {
     let built = docs.into_iter().map(build_document).collect::<Vec<_>>();
-    let mut index = state
-        .index
-        .lock()
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(StatusResponse { status: "index lock poisoned".to_string() })))?;
-    index
-        .update_documents(built)
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, Json(StatusResponse { status: err.to_string() })))?;
-    Ok(Json(StatusResponse { status: "ok".to_string() }))
+    let mut index = state.index.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(StatusResponse {
+                status: "index lock poisoned".to_string(),
+            }),
+        )
+    })?;
+    index.update_documents(built).map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(StatusResponse {
+                status: err.to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(StatusResponse {
+        status: "ok".to_string(),
+    }))
 }
 
 #[utoipa::path(
@@ -145,23 +190,42 @@ pub async fn delete_documents(
     State(state): State<ApiState>,
     Json(req): Json<DeleteRequest>,
 ) -> Result<Json<StatusResponse>, (StatusCode, Json<StatusResponse>)> {
-    let mut index = state
-        .index
-        .lock()
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(StatusResponse { status: "index lock poisoned".to_string() })))?;
+    let mut index = state.index.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(StatusResponse {
+                status: "index lock poisoned".to_string(),
+            }),
+        )
+    })?;
     if !req.logical_keys.is_empty() {
         index
             .delete_logical_keys(&req.logical_keys)
-            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, Json(StatusResponse { status: err.to_string() })))?;
+            .map_err(|err| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(StatusResponse {
+                        status: err.to_string(),
+                    }),
+                )
+            })?;
     }
     if !req.doc_ids.is_empty() {
-        index
-            .delete_doc_ids(&req.doc_ids)
-            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, Json(StatusResponse { status: err.to_string() })))?;
+        index.delete_doc_ids(&req.doc_ids).map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(StatusResponse {
+                    status: err.to_string(),
+                }),
+            )
+        })?;
     }
-    Ok(Json(StatusResponse { status: "ok".to_string() }))
+    Ok(Json(StatusResponse {
+        status: "ok".to_string(),
+    }))
 }
 
+/// Runs the HTTP API server.
 pub async fn serve(index: Index, bind: String) -> anyhow::Result<()> {
     let state = ApiState {
         index: Arc::new(Mutex::new(index)),
@@ -172,6 +236,7 @@ pub async fn serve(index: Index, bind: String) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Creates the default FastEmbed provider.
 pub fn default_provider() -> anyhow::Result<FastEmbedProvider> {
     FastEmbedProvider::new_default()
 }

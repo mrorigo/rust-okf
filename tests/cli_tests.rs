@@ -1,5 +1,4 @@
 use assert_cmd::Command;
-use predicates::str::contains;
 
 #[test]
 fn cli_can_write_default_config() {
@@ -10,8 +9,7 @@ fn cli_can_write_default_config() {
         .unwrap()
         .args(["--config", config.to_str().unwrap(), "init-config"])
         .assert()
-        .success()
-        .stdout(contains("wrote default config"));
+        .success();
 
     assert!(config.exists());
 }

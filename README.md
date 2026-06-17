@@ -1,6 +1,8 @@
 # rust-okf
 
 <p align="left">
+  <a href="https://github.com/origo/OKF-Manager/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/origo/OKF-Manager/ci.yml?branch=main&label=CI" alt="CI status"></a>
+  <a href="https://github.com/origo/OKF-Manager/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/origo/OKF-Manager/release.yml?label=Release" alt="Release workflow status"></a>
   <a href="https://crates.io/crates/rust-okf"><img src="https://img.shields.io/crates/v/rust-okf.svg" alt="Crates.io"></a>
   <a href="https://docs.rs/rust-okf"><img src="https://docs.rs/rust-okf/badge.svg" alt="Docs.rs"></a>
   <a href="./Cargo.toml"><img src="https://img.shields.io/badge/rust-1.93%2B-orange.svg" alt="Rust 1.93+"></a>
@@ -79,6 +81,21 @@ cargo build
 ```bash
 cargo test
 ```
+
+## Benchmarks
+
+Run the Criterion benchmarks to publish repeatable performance numbers for
+indexing, hybrid search, and segment load time:
+
+```bash
+cargo bench --bench operations
+```
+
+The current benchmark suite measures:
+
+- index build throughput for small, medium, and larger corpus sizes
+- hybrid search latency across a prebuilt corpus
+- segment reopen and bundle load time
 
 ## Configuration
 

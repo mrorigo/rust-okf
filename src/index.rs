@@ -3,7 +3,9 @@ use crate::bm25::{Bm25Config, Bm25Index};
 use crate::embedding::EmbeddingProvider;
 use crate::okf::OkfDocument;
 use crate::query::{rrf_fuse, QueryPlan, SearchResult};
-use crate::storage::{results_from_docs, IndexStorage, Manifest, SegmentFile, SegmentMetadata};
+use crate::storage::{
+    results_from_docs, IndexStorage, Manifest, SegmentFile, SegmentMetadata, SegmentView,
+};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -47,7 +49,7 @@ pub enum IndexError {
 pub struct Index {
     storage: IndexStorage,
     manifest: Manifest,
-    segments: Vec<SegmentFile>,
+    segments: Vec<SegmentView>,
     config: IndexConfig,
     embedding_provider: Box<dyn EmbeddingProvider>,
 }
@@ -72,7 +74,8 @@ impl Index {
         embedding_provider: Box<dyn EmbeddingProvider>,
     ) -> Result<Self> {
         let storage = IndexStorage::open(path)?;
-        let manifest = storage.load_manifest()?;
+        let mut manifest = storage.load_manifest()?;
+        storage.recover(&mut manifest)?;
         let mut segments = Vec::new();
         for seg in &manifest.segments {
             segments.push(storage.read_segment(seg)?);
@@ -130,9 +133,10 @@ impl Index {
         self.manifest.embedding_dimension = self.embedding_provider.dimension();
         self.manifest.embedding_model = "fastembed".to_string();
         self.manifest.bm25 = self.config.bm25.clone();
-        self.manifest.segments.push(entry);
+        self.manifest.segments.push(entry.clone());
         self.storage.save_manifest(&self.manifest)?;
-        self.segments.push(segment);
+        self.storage.clear_journal()?;
+        self.segments.push(self.storage.read_segment(&entry)?);
         Ok(())
     }
 
@@ -157,9 +161,12 @@ impl Index {
     pub fn delete_logical_keys(&mut self, logical_keys: &[String]) -> Result<()> {
         let mut ids_to_delete = Vec::new();
         for segment in &self.segments {
-            for doc in &segment.documents {
-                if logical_keys.iter().any(|key| key == &doc.logical_key) {
-                    ids_to_delete.push(doc.doc_id.clone());
+            for doc in segment.document_views() {
+                if logical_keys
+                    .iter()
+                    .any(|key| key == doc.logical_key().unwrap_or_default())
+                {
+                    ids_to_delete.push(doc.doc_id().unwrap_or_default().to_string());
                 }
             }
         }
@@ -196,19 +203,19 @@ impl Index {
         for segment in &self.segments {
             all_docs.extend(
                 segment
-                    .documents
-                    .iter()
+                    .document_views()
+                    .into_iter()
                     .filter(|doc| {
                         !self
                             .manifest
                             .tombstones
                             .iter()
-                            .any(|dead| dead == &doc.doc_id)
+                            .any(|dead| dead == doc.doc_id().unwrap_or_default())
                     })
-                    .cloned(),
+                    .map(|doc| doc.to_owned()),
             );
             if matches!(mode, SearchMode::Lexical | SearchMode::Hybrid) {
-                for (doc_id, score) in segment.bm25.score(query) {
+                for (doc_id, score) in segment.bm25().score(query) {
                     if self.manifest.tombstones.iter().any(|dead| dead == &doc_id) {
                         continue;
                     }
@@ -216,8 +223,7 @@ impl Index {
                 }
             }
             if let Some(query_embedding) = &query_embedding {
-                let scores =
-                    cosine_scores(query_embedding, &segment.embeddings, &segment.documents);
+                let scores = cosine_scores(query_embedding, segment);
                 for (doc_id, score) in scores {
                     if self.manifest.tombstones.iter().any(|dead| dead == &doc_id) {
                         continue;
@@ -252,12 +258,29 @@ impl Index {
         let docs = crate::okf::load_bundle(bundle_dir.as_ref())?;
         self.update_documents(docs)
     }
+
+    /// Compacts the current live segments into a fresh segment.
+    pub fn compact(&mut self) -> Result<()> {
+        let entry = self.storage.compact(&self.segments, &self.manifest)?;
+        self.manifest.generation += 1;
+        self.manifest.segments = vec![entry.clone()];
+        self.manifest.tombstones.clear();
+        self.storage.save_manifest(&self.manifest)?;
+        let rebuilt = self.storage.read_segment(&entry)?;
+        self.segments = vec![rebuilt];
+        Ok(())
+    }
 }
 
-fn cosine_scores(query: &[f32], vectors: &[Vec<f32>], docs: &[OkfDocument]) -> Vec<(String, f32)> {
+fn cosine_scores(query: &[f32], segment: &SegmentView) -> Vec<(String, f32)> {
+    let vectors = segment.embeddings();
+    let docs = segment.document_views();
     let mut scores = Vec::with_capacity(vectors.len());
     for (idx, vec) in vectors.iter().enumerate() {
-        scores.push((docs[idx].doc_id.clone(), cosine_similarity(query, vec)));
+        scores.push((
+            docs[idx].doc_id().unwrap_or_default().to_string(),
+            cosine_similarity(query, vec),
+        ));
     }
     scores
 }

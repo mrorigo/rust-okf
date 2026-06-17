@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use tracing::info;
 
 #[derive(Parser)]
-#[command(name = "rust-okf")]
+#[command(name = "okf")]
 #[command(about = "High-performance OKF bundle index and search engine")]
 struct Cli {
     #[arg(long, default_value = "okf.toml")]
@@ -50,6 +50,7 @@ enum Commands {
         #[arg(long)]
         bind: Option<String>,
     },
+    Compact,
 }
 
 fn provider_from_cli(mock: bool) -> anyhow::Result<Box<dyn rust_okf::EmbeddingProvider>> {
@@ -115,6 +116,10 @@ async fn main() -> anyhow::Result<()> {
             let bind = bind.unwrap_or(config.bind);
             info!(bind = %bind, "starting http server");
             serve_http(index, bind).await?;
+        }
+        Commands::Compact => {
+            index.compact()?;
+            info!("compacted index");
         }
         Commands::InitConfig => {}
     }

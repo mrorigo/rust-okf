@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            ext: ""
+            archive: tar.gz
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            ext: ""
+            archive: tar.gz
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            ext: ""
+            archive: tar.gz
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            ext: ""
+            archive: tar.gz
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: ".exe"
+            archive: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Zig (musl cross builds)
+        if: contains(matrix.target, 'musl')
+        uses: goto-bus-stop/setup-zig@v2
+
+      - name: Install cargo-zigbuild (musl cross builds)
+        if: contains(matrix.target, 'musl')
+        shell: bash
+        run: cargo install cargo-zigbuild --locked
+
+      - name: Build okf
+        if: ${{ !contains(matrix.target, 'musl') }}
+        working-directory: rust-okf
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build okf (musl)
+        if: contains(matrix.target, 'musl')
+        working-directory: rust-okf
+        run: cargo zigbuild --release --target ${{ matrix.target }}
+
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        working-directory: rust-okf
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          BIN="target/${{ matrix.target }}/release/okf${{ matrix.ext }}"
+          OUT="dist/okf-${{ matrix.target }}.tar.gz"
+          tar -C "$(dirname "$BIN")" -czf "$OUT" "$(basename "$BIN")"
+          shasum -a 256 "$OUT" > "dist/okf-${{ matrix.target }}.tar.gz.sha256"
+
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        working-directory: rust-okf
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $bin = "target/${{ matrix.target }}/release/okf${{ matrix.ext }}"
+          $out = "dist/okf-${{ matrix.target }}.zip"
+          Compress-Archive -Path $bin -DestinationPath $out -Force
+          $hash = (Get-FileHash -Algorithm SHA256 $out).Hash.ToLower()
+          "$hash  okf-${{ matrix.target }}.zip" | Out-File -Encoding ascii "dist/okf-${{ matrix.target }}.zip.sha256"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: okf-${{ matrix.target }}
+          path: rust-okf/dist/
+
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          find dist -type f -maxdepth 3 -print0 | xargs -0 -I {} cp {} out/
+          ls -la out
+
+      - name: Create checksums bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd out
+          cat *.sha256 > checksums.sha256
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/*
+          generate_release_notes: true

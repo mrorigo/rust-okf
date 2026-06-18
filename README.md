@@ -97,6 +97,23 @@ The current benchmark suite measures:
 - hybrid search latency across a prebuilt corpus
 - segment reopen and bundle load time
 
+Latest recorded benchmark results:
+
+| Benchmark | Result |
+| --- | ---: |
+| `index_build/10` | `8.04 ms` |
+| `index_build/100` | `12.38 ms` |
+| `index_build/500` | `34.09 ms` |
+| `hybrid_search/query/orders` | `278.63 us` |
+| `hybrid_search/query/revenue` | `278.64 us` |
+| `hybrid_search/query/customer activity` | `312.25 us` |
+| `segment_load/reopen_index` | `595.42 us` |
+| `segment_load/load_bundle` | `15.13 us` |
+
+These numbers come from the current Criterion suite and are meant as a
+repeatable baseline, not a fixed performance ceiling. Re-run the benchmark
+command above after material changes to indexing, storage, or retrieval.
+
 ## Configuration
 
 `rust-okf` uses a TOML config file, defaulting to `okf.toml`.

@@ -58,18 +58,15 @@ jobs:
 
       - name: Build okf
         if: ${{ !contains(matrix.target, 'musl') }}
-        working-directory: rust-okf
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Build okf (musl)
         if: contains(matrix.target, 'musl')
-        working-directory: rust-okf
         run: cargo zigbuild --release --target ${{ matrix.target }}
 
       - name: Package (tar.gz)
         if: matrix.archive == 'tar.gz'
         shell: bash
-        working-directory: rust-okf
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -81,7 +78,6 @@ jobs:
       - name: Package (zip)
         if: matrix.archive == 'zip'
         shell: pwsh
-        working-directory: rust-okf
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $bin = "target/${{ matrix.target }}/release/okf${{ matrix.ext }}"
@@ -94,7 +90,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: okf-${{ matrix.target }}
-          path: rust-okf/dist/
+          path: dist/
 
   release:
     name: Publish Release

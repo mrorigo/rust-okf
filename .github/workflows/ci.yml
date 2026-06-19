@@ -24,13 +24,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Format
-        working-directory: rust-okf
         run: cargo fmt --check
 
       - name: Lint
-        working-directory: rust-okf
         run: cargo clippy -- -D warnings
 
       - name: Test
-        working-directory: rust-okf
         run: cargo test

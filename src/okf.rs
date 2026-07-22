@@ -183,6 +183,25 @@ pub fn load_bundle(bundle_dir: &Path) -> anyhow::Result<Vec<OkfDocument>> {
         if entry.path().extension().and_then(|s| s.to_str()) != Some("md") {
             continue;
         }
+        let rel_path = entry
+            .path()
+            .strip_prefix(bundle_dir)
+            .unwrap_or_else(|_| entry.path());
+
+        if rel_path
+            .components()
+            .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+        {
+            continue;
+        }
+
+        if let Some(file_name) = entry.path().file_name().and_then(|s| s.to_str()) {
+            let lower_name = file_name.to_lowercase();
+            if lower_name == "index.md" || lower_name == "log.md" {
+                continue;
+            }
+        }
+
         let content = fs::read_to_string(entry.path())?;
         let (frontmatter, body) = split_frontmatter(&content)?;
         let mut builder = OkfDocumentBuilder::new(bundle_dir, entry.path()).body(body);
@@ -197,10 +216,11 @@ pub fn load_bundle(bundle_dir: &Path) -> anyhow::Result<Vec<OkfDocument>> {
 fn split_frontmatter(
     content: &str,
 ) -> anyhow::Result<(HashMap<String, serde_json::Value>, String)> {
-    if !content.starts_with("---\n") {
-        return Ok((HashMap::new(), content.to_string()));
+    let trimmed = content.strip_prefix("\u{feff}").unwrap_or(content);
+    if !trimmed.starts_with("---\n") && !trimmed.starts_with("---\r\n") {
+        return Ok((HashMap::new(), trimmed.to_string()));
     }
-    let mut lines = content.lines();
+    let mut lines = trimmed.lines();
     let _ = lines.next();
     let mut yaml_lines = Vec::new();
     for line in &mut lines {

@@ -180,3 +180,93 @@ fn golden_query_order_is_stable() {
         .collect();
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn crlf_and_bom_frontmatter_parsing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bundle = tmp.path().join("bundle");
+    fs::create_dir_all(&bundle).unwrap();
+    let crlf_content = "\u{feff}---\r\ntype: Metric\r\ntitle: Windows Test\r\ntags:\r\n  - crlf\r\n---\r\nbody text\r\n";
+    fs::write(bundle.join("win.md"), crlf_content).unwrap();
+
+    let docs = rust_okf::okf::load_bundle(&bundle).unwrap();
+    assert_eq!(docs.len(), 1);
+    assert_eq!(docs[0].title.as_deref(), Some("Windows Test"));
+    assert_eq!(docs[0].tags, vec!["crlf"]);
+}
+
+#[test]
+fn load_bundle_filters_reserved_and_hidden_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bundle = tmp.path().join("bundle");
+    fs::create_dir_all(bundle.join(".git")).unwrap();
+    fs::write(bundle.join("index.md"), "---\ntitle: Index\n---\nbody\n").unwrap();
+    fs::write(bundle.join("log.md"), "---\ntitle: Log\n---\nbody\n").unwrap();
+    fs::write(
+        bundle.join(".git/hidden.md"),
+        "---\ntitle: Git\n---\nbody\n",
+    )
+    .unwrap();
+    fs::write(
+        bundle.join("concept.md"),
+        "---\ntitle: Concept\n---\nbody\n",
+    )
+    .unwrap();
+
+    let docs = rust_okf::okf::load_bundle(&bundle).unwrap();
+    assert_eq!(docs.len(), 1);
+    assert_eq!(docs[0].title.as_deref(), Some("Concept"));
+}
+
+#[test]
+fn add_is_idempotent_and_does_not_duplicate_scores() {
+    let tmp = tempfile::tempdir().unwrap();
+    let index_dir = tmp.path().join("index");
+    let bundle = tmp.path().join("bundle");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::create_dir_all(&index_dir).unwrap();
+
+    let mut index = open_index(&index_dir, Box::new(MockEmbeddingProvider::new(16))).unwrap();
+    let doc = OkfDocumentBuilder::new(&bundle, bundle.join("a.md"))
+        .frontmatter_value("type", "Metric")
+        .frontmatter_value("title", "Orders")
+        .body("Orders completed by customers")
+        .build();
+
+    index.index_documents(vec![doc.clone()]).unwrap();
+    let (results_first, _) = index.search("orders", SearchMode::Hybrid, 10).unwrap();
+
+    index.index_documents(vec![doc]).unwrap();
+    let (results_second, _) = index.search("orders", SearchMode::Hybrid, 10).unwrap();
+
+    assert_eq!(results_first.len(), 1);
+    assert_eq!(results_second.len(), 1);
+    assert!((results_first[0].fused_score - results_second[0].fused_score).abs() < f32::EPSILON);
+}
+
+#[test]
+fn reindexing_deleted_doc_clears_tombstone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let index_dir = tmp.path().join("index");
+    let bundle = tmp.path().join("bundle");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::create_dir_all(&index_dir).unwrap();
+
+    let mut index = open_index(&index_dir, Box::new(MockEmbeddingProvider::new(16))).unwrap();
+    let doc = OkfDocumentBuilder::new(&bundle, bundle.join("a.md"))
+        .frontmatter_value("type", "Metric")
+        .frontmatter_value("title", "Orders")
+        .body("Orders completed by customers")
+        .build();
+
+    let doc_id = doc.doc_id.clone();
+    index.index_documents(vec![doc.clone()]).unwrap();
+    index.delete_doc_ids(&[doc_id]).unwrap();
+
+    let (results_after_delete, _) = index.search("orders", SearchMode::Hybrid, 10).unwrap();
+    assert!(results_after_delete.is_empty());
+
+    index.index_documents(vec![doc]).unwrap();
+    let (results_after_reindex, _) = index.search("orders", SearchMode::Hybrid, 10).unwrap();
+    assert_eq!(results_after_reindex.len(), 1);
+}

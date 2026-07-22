@@ -99,14 +99,14 @@ impl Index {
         if docs.is_empty() {
             return Ok(());
         }
-        let tombstoned_keys: HashSet<String> = self.manifest.tombstones.iter().cloned().collect();
-        let docs: Vec<OkfDocument> = docs
-            .into_iter()
-            .filter(|doc| !tombstoned_keys.contains(&doc.doc_id))
-            .collect();
-        if docs.is_empty() {
-            return Ok(());
-        }
+        let logical_keys: Vec<String> = docs.iter().map(|d| d.logical_key.clone()).collect();
+        self.delete_logical_keys(&logical_keys)?;
+
+        let incoming_doc_ids: HashSet<String> = docs.iter().map(|d| d.doc_id.clone()).collect();
+        self.manifest
+            .tombstones
+            .retain(|id| !incoming_doc_ids.contains(id));
+
         let texts: Vec<String> = docs.iter().map(|doc| doc.searchable_text.clone()).collect();
         let embeddings = self.embedding_provider.embed(&texts)?;
         let pairs: Vec<(String, String)> = docs
@@ -175,8 +175,6 @@ impl Index {
 
     /// Replaces existing documents with new versions.
     pub fn update_documents(&mut self, docs: Vec<OkfDocument>) -> Result<()> {
-        let logical_keys: Vec<String> = docs.iter().map(|d| d.logical_key.clone()).collect();
-        self.delete_logical_keys(&logical_keys)?;
         self.index_documents(docs)
     }
 

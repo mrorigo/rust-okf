@@ -37,6 +37,9 @@ pub struct AppConfig {
     /// Embedding backend configuration.
     #[serde(default)]
     pub fastembed: FastEmbedConfig,
+    /// HNSW ANN vector indexing configuration.
+    #[serde(default)]
+    pub ann: crate::ann::AnnConfig,
     /// Default HTTP bind address.
     #[serde(default = "default_bind")]
     pub bind: String,
@@ -57,6 +60,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             fastembed: FastEmbedConfig::default(),
+            ann: crate::ann::AnnConfig::default(),
             bind: default_bind(),
             index: default_index(),
         }

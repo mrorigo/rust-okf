@@ -11,6 +11,12 @@
 
 `rust-okf` is a Rust-native index and query engine for OKF bundles. It is built for speed, shaped for real data, and tuned for hybrid retrieval without the usual index-engine bloat.
 
+> [!NOTE]
+> **v0.2.0 Updates**:
+> - **Metadata & Faceted Filtering**: Filter search queries by document `types`, `tags`, and `concept_path_prefix`.
+> - **Pagination & Offset Support**: Paginate search results with `offset` / `--offset` and receive `total_hits` in search responses.
+> - **Idempotent Ingestion & Parser Fixes**: Automatic tombstone cleanup on re-indexing, CRLF line ending support, and filtering reserved files (`index.md`, `log.md`).
+
 It is built for speed and keeps the core search path deliberately simple:
 
 - FastEmbed for dense embeddings by default
@@ -24,6 +30,8 @@ The goal is not a toy demo. The goal is a small, sharp engine that can index OKF
 ## At A Glance
 
 - hybrid retrieval over OKF Markdown bundles
+- metadata & faceted filtering by type, tag, and concept path
+- paginated query execution with offset & total hit count
 - production embeddings via FastEmbed
 - atomic manifest-driven persistence
 - CLI for indexing and search
@@ -42,6 +50,8 @@ The goal is not a toy demo. The goal is a small, sharp engine that can index OKF
 - default production embeddings via `fastembed`
 - hybrid search with lexical + vector candidate generation
 - RRF fusion for ranking
+- structured metadata filtering (types, tags, concept path prefix)
+- pagination & offset support with `total_hits` count
 - memory-mapped segment reads
 - versioned manifest for safe recovery
 - explicit OpenAPI schema for the HTTP API
@@ -165,14 +175,17 @@ cargo run -- delete --logical-key <bundle>::<concept-path>
 ### Search
 
 ```bash
-cargo run -- search "orders completed" --mode hybrid --top-k 10
+cargo run -- search "orders completed" --mode hybrid --top-k 10 --offset 0 --filter-type Metric --filter-tag sales
 ```
 
-Search modes:
+Search options:
 
-- `lexical`
-- `vector`
-- `hybrid`
+- `--mode`: `lexical`, `vector`, `hybrid` (default: `hybrid`)
+- `--top-k`: number of results to return (default: `10`)
+- `--offset`: pagination offset (default: `0`)
+- `--filter-type`: filter by document type (can be specified multiple times)
+- `--filter-tag`: filter by tag (can be specified multiple times)
+- `--filter-path`: concept path prefix filter
 
 ### Run the HTTP API
 
@@ -197,7 +210,13 @@ The server exposes:
 {
   "query": "orders completed",
   "mode": "hybrid",
-  "top_k": 10
+  "top_k": 10,
+  "offset": 0,
+  "filter": {
+    "types": ["Metric"],
+    "tags": ["sales"],
+    "concept_path_prefix": "metrics/"
+  }
 }
 ```
 

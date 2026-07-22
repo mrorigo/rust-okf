@@ -1,3 +1,4 @@
+pub mod ann;
 pub mod api;
 /// Rust guideline compliant 2026-06-17
 ///
@@ -12,6 +13,7 @@ pub mod query;
 pub mod schema;
 pub mod storage;
 
+pub use ann::{AnnConfig, HnswIndex};
 pub use api::serve as serve_http;
 pub use config::{AppConfig, FastEmbedConfig};
 pub use embedding::FastEmbedProvider;

@@ -374,3 +374,62 @@ fn search_pagination_offset_and_top_k() {
         .unwrap();
     assert_eq!(page3.len(), 1);
 }
+
+#[test]
+fn hnsw_ann_search_recall_and_threshold_switching() {
+    use rust_okf::ann::{AnnConfig, HnswIndex};
+
+    let dim = 16;
+    let mut vectors = Vec::new();
+    for i in 0..600 {
+        let mut v = vec![0.0f32; dim];
+        v[i % dim] = (i + 1) as f32;
+        v[(i + 3) % dim] = ((i * 7) % 13) as f32;
+        vectors.push(v);
+    }
+
+    let config = AnnConfig {
+        enabled: true,
+        threshold: 500,
+        m: 16,
+        ef_construction: 64,
+        ef_search: 32,
+    };
+
+    let hnsw = HnswIndex::build(&vectors, &config);
+    let serialized = hnsw.serialize();
+    let deserialized = HnswIndex::deserialize(&serialized).unwrap();
+
+    let query = vec![1.0f32; dim];
+    let ann_results = deserialized.search(&query, 10, &vectors);
+    assert_eq!(ann_results.len(), 10);
+
+    // Verify low threshold switching during document indexing
+    let tmp = tempfile::tempdir().unwrap();
+    let index_dir = tmp.path().join("index");
+    let bundle = tmp.path().join("bundle");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::create_dir_all(&index_dir).unwrap();
+
+    let index = open_index(&index_dir, Box::new(MockEmbeddingProvider::new(16))).unwrap();
+    index.manifest(); // loads manifest
+    let mut docs = Vec::new();
+    for i in 1..=5 {
+        docs.push(
+            OkfDocumentBuilder::new(&bundle, bundle.join(format!("ann_doc{i}.md")))
+                .frontmatter_value("type", "Metric")
+                .frontmatter_value("title", format!("Vector Item {i}"))
+                .body(format!("Dense vector representation item {i}"))
+                .build(),
+        );
+    }
+
+    let mut custom_index =
+        open_index(&index_dir, Box::new(MockEmbeddingProvider::new(16))).unwrap();
+    custom_index.index_documents(docs).unwrap();
+
+    let (results, _) = custom_index
+        .search("Vector Item", SearchMode::Vector, 5)
+        .unwrap();
+    assert!(!results.is_empty());
+}

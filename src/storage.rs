@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// On-disk index format version.
-pub const INDEX_FORMAT_VERSION: u32 = 4;
+pub const INDEX_FORMAT_VERSION: u32 = 5;
 /// Magic bytes identifying a segment file.
-pub const SEGMENT_MAGIC: &[u8; 8] = b"OKFSEG04";
+pub const SEGMENT_MAGIC: &[u8; 8] = b"OKFSEG05";
 /// Magic bytes identifying a journal file.
 pub const JOURNAL_MAGIC: &[u8; 8] = b"OKFJRN01";
 
@@ -91,6 +91,7 @@ pub trait SegmentReader {
     fn documents(&self) -> Vec<OkfDocument>;
     fn bm25(&self) -> Bm25Index;
     fn embeddings(&self) -> Vec<Vec<f32>>;
+    fn hnsw(&self) -> Option<crate::ann::HnswIndex>;
 }
 
 /// Materialized segment payload used by indexing.
@@ -101,6 +102,7 @@ pub struct SegmentFile {
     pub documents: Vec<OkfDocument>,
     pub bm25: Bm25Index,
     pub embeddings: Vec<Vec<f32>>,
+    pub hnsw: Option<crate::ann::HnswIndex>,
 }
 
 impl SegmentReader for SegmentFile {
@@ -118,6 +120,10 @@ impl SegmentReader for SegmentFile {
 
     fn embeddings(&self) -> Vec<Vec<f32>> {
         self.embeddings.clone()
+    }
+
+    fn hnsw(&self) -> Option<crate::ann::HnswIndex> {
+        self.hnsw.clone()
     }
 }
 
@@ -324,6 +330,14 @@ impl IndexStorage {
             .map(|doc| (doc.doc_id.clone(), doc.searchable_text.clone()))
             .collect();
         let bm25 = Bm25Index::build(&bm25_pairs, manifest.bm25.clone());
+        let hnsw = if embeddings.len() >= 500 {
+            Some(crate::ann::HnswIndex::build(
+                &embeddings,
+                &crate::ann::AnnConfig::default(),
+            ))
+        } else {
+            None
+        };
         let segment = SegmentFile {
             segment_id: segment_id.clone(),
             metadata: SegmentMetadata {
@@ -335,6 +349,7 @@ impl IndexStorage {
             documents: live_docs,
             bm25,
             embeddings,
+            hnsw,
         };
         self.write_segment(&segment)
     }
@@ -361,6 +376,7 @@ impl SegmentView {
             .collect::<Vec<_>>();
         let bm25 = self.bm25();
         let embeddings = self.embeddings();
+        let hnsw = self.hnsw();
         Ok(SegmentFile {
             segment_id: self.header.segment_id.clone(),
             metadata: SegmentMetadata {
@@ -372,6 +388,7 @@ impl SegmentView {
             documents,
             bm25,
             embeddings,
+            hnsw,
         })
     }
 
@@ -445,6 +462,15 @@ impl SegmentView {
             self.header.vector_dim,
         )
         .unwrap_or_default()
+    }
+
+    /// Returns the HNSW ANN index reconstructed from the mmap view if present.
+    pub fn hnsw(&self) -> Option<crate::ann::HnswIndex> {
+        if self.header.hnsw_len == 0 {
+            return None;
+        }
+        let bytes = self.slice(self.header.hnsw_offset, self.header.hnsw_len);
+        crate::ann::HnswIndex::deserialize(bytes).ok()
     }
 
     fn strings(&self) -> &[u8] {
@@ -565,6 +591,8 @@ struct SegmentHeader {
     postings_len: u64,
     vectors_offset: u64,
     vectors_len: u64,
+    hnsw_offset: u64,
+    hnsw_len: u64,
 }
 
 fn parse_segment_header(mmap: &Mmap) -> Result<SegmentHeader> {
@@ -590,6 +618,8 @@ fn parse_segment_header(mmap: &Mmap) -> Result<SegmentHeader> {
     let postings_len = read_u64(mmap, &mut cursor)?;
     let vectors_offset = read_u64(mmap, &mut cursor)?;
     let vectors_len = read_u64(mmap, &mut cursor)?;
+    let hnsw_offset = read_u64(mmap, &mut cursor)?;
+    let hnsw_len = read_u64(mmap, &mut cursor)?;
     let segment_id = format!("mmap-{:x}", docs_offset);
     Ok(SegmentHeader {
         segment_id,
@@ -611,6 +641,8 @@ fn parse_segment_header(mmap: &Mmap) -> Result<SegmentHeader> {
         postings_len,
         vectors_offset,
         vectors_len,
+        hnsw_offset,
+        hnsw_len,
     })
 }
 
@@ -768,7 +800,13 @@ fn write_segment_bin(path: &Path, segment: &SegmentFile) -> Result<()> {
         }
     }
 
-    let header_size = 8 + 4 + 4 + 4 + 4 + 4 + 10 * 8;
+    let hnsw_bytes = segment
+        .hnsw
+        .as_ref()
+        .map(|h| h.serialize())
+        .unwrap_or_default();
+
+    let header_size = 8 + 4 + 4 + 4 + 4 + 4 + 12 * 8;
     let docs_offset = header_size as u64;
     let docs_len = (docs.len() * std::mem::size_of::<DocEntry>()) as u64;
     let strings_offset = docs_offset + docs_len;
@@ -779,6 +817,8 @@ fn write_segment_bin(path: &Path, segment: &SegmentFile) -> Result<()> {
     let postings_len = postings.len() as u64;
     let vectors_offset = postings_offset + postings_len;
     let vectors_len = vectors.len() as u64;
+    let hnsw_offset = vectors_offset + vectors_len;
+    let hnsw_len = hnsw_bytes.len() as u64;
 
     let mut file = OpenOptions::new()
         .create(true)
@@ -802,6 +842,8 @@ fn write_segment_bin(path: &Path, segment: &SegmentFile) -> Result<()> {
         postings_len,
         vectors_offset,
         vectors_len,
+        hnsw_offset,
+        hnsw_len,
     ] {
         write_u64_to(&mut file, v)?;
     }
@@ -814,6 +856,7 @@ fn write_segment_bin(path: &Path, segment: &SegmentFile) -> Result<()> {
     }
     file.write_all(&postings)?;
     file.write_all(&vectors)?;
+    file.write_all(&hnsw_bytes)?;
     file.sync_all()?;
     Ok(())
 }

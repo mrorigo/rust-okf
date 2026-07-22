@@ -19,6 +19,8 @@ pub struct IndexConfig {
     pub bm25: Bm25Config,
     /// Reciprocal Rank Fusion constant.
     pub rrf_k: f32,
+    /// HNSW ANN configuration.
+    pub ann: crate::ann::AnnConfig,
 }
 
 impl Default for IndexConfig {
@@ -26,6 +28,7 @@ impl Default for IndexConfig {
         Self {
             bm25: Bm25Config::default(),
             rrf_k: 60.0,
+            ann: crate::ann::AnnConfig::default(),
         }
     }
 }
@@ -121,12 +124,18 @@ impl Index {
             embedding_dimension: self.embedding_provider.dimension(),
             created_at: now_nanos() as u64,
         };
+        let hnsw = if self.config.ann.enabled && docs.len() >= self.config.ann.threshold {
+            Some(crate::ann::HnswIndex::build(&embeddings, &self.config.ann))
+        } else {
+            None
+        };
         let segment = SegmentFile {
             segment_id: segment_id.clone(),
             metadata,
             documents: docs,
             bm25,
             embeddings,
+            hnsw,
         };
         let entry = self.storage.write_segment(&segment)?;
         self.manifest.generation += 1;
@@ -235,7 +244,7 @@ impl Index {
                 }
             }
             if let Some(query_embedding) = &query_embedding {
-                let scores = cosine_scores(query_embedding, segment);
+                let scores = cosine_scores(query_embedding, segment, &self.config.ann);
                 for (doc_id, score) in scores {
                     if valid_doc_ids.contains(&doc_id) {
                         *vector_map.entry(doc_id).or_default() += score;
@@ -317,9 +326,28 @@ fn matches_filter(
     true
 }
 
-fn cosine_scores(query: &[f32], segment: &SegmentView) -> Vec<(String, f32)> {
-    let vectors = segment.embeddings();
+fn cosine_scores(
+    query: &[f32],
+    segment: &SegmentView,
+    config: &crate::ann::AnnConfig,
+) -> Vec<(String, f32)> {
     let docs = segment.document_views();
+
+    if config.enabled && docs.len() >= config.threshold {
+        if let Some(hnsw) = segment.hnsw() {
+            let embeddings = segment.embeddings();
+            let ann_results = hnsw.search(query, docs.len(), &embeddings);
+            return ann_results
+                .into_iter()
+                .filter_map(|(idx, score)| {
+                    let doc_id = docs.get(idx)?.doc_id()?.to_string();
+                    Some((doc_id, score))
+                })
+                .collect();
+        }
+    }
+
+    let vectors = segment.embeddings();
     let mut scores = Vec::with_capacity(vectors.len());
     for (idx, vec) in vectors.iter().enumerate() {
         scores.push((

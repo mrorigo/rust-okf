@@ -12,7 +12,8 @@
 `rust-okf` is a Rust-native index and query engine for OKF bundles. It is built for speed, shaped for real data, and tuned for hybrid retrieval without the usual index-engine bloat.
 
 > [!NOTE]
-> **v0.2.0 Updates**:
+> **v0.2.0 Release Highlights**:
+> - **HNSW ANN Vector Indexing**: Sub-linear $O(\log N)$ vector retrieval via pure Rust Hierarchical Navigable Small World (HNSW) graphs persisted directly in memory-mapped segment files (`OKFSEG05`).
 > - **Metadata & Faceted Filtering**: Filter search queries by document `types`, `tags`, and `concept_path_prefix`.
 > - **Pagination & Offset Support**: Paginate search results with `offset` / `--offset` and receive `total_hits` in search responses.
 > - **Idempotent Ingestion & Parser Fixes**: Automatic tombstone cleanup on re-indexing, CRLF line ending support, and filtering reserved files (`index.md`, `log.md`).
@@ -20,6 +21,7 @@
 It is built for speed and keeps the core search path deliberately simple:
 
 - FastEmbed for dense embeddings by default
+- HNSW ANN indexing for $O(\log N)$ vector retrieval on large segments
 - BM25 for lexical retrieval
 - Reciprocal Rank Fusion for hybrid ranking
 - immutable on-disk segments with atomic commits
@@ -30,6 +32,7 @@ The goal is not a toy demo. The goal is a small, sharp engine that can index OKF
 ## At A Glance
 
 - hybrid retrieval over OKF Markdown bundles
+- HNSW ANN graph vector indexing stored directly on disk (`OKFSEG05`)
 - metadata & faceted filtering by type, tag, and concept path
 - paginated query execution with offset & total hit count
 - production embeddings via FastEmbed
@@ -41,7 +44,7 @@ The goal is not a toy demo. The goal is a small, sharp engine that can index OKF
 
 - scans OKF bundles from Markdown files with YAML frontmatter
 - extracts document metadata and searchable text
-- stores hybrid search state on disk
+- stores hybrid search state and HNSW graphs on disk
 - supports updates and deletes without full rebuilds
 - exposes both a CLI and an HTTP API
 
@@ -49,6 +52,7 @@ The goal is not a toy demo. The goal is a small, sharp engine that can index OKF
 
 - default production embeddings via `fastembed`
 - hybrid search with lexical + vector candidate generation
+- HNSW ANN vector search for $O(\log N)$ scale queries
 - RRF fusion for ranking
 - structured metadata filtering (types, tags, concept path prefix)
 - pagination & offset support with `total_hits` count
@@ -68,9 +72,10 @@ cargo run -- serve --bind 127.0.0.1:8787
 
 - `src/okf.rs` parses and normalizes OKF documents
 - `src/bm25.rs` implements lexical scoring
+- `src/ann.rs` implements HNSW vector index construction, cosine distance, and graph serialization
 - `src/embedding.rs` wraps FastEmbed and the mock provider
-- `src/storage.rs` handles manifests and binary segment files
-- `src/index.rs` coordinates indexing, updates, deletes, and search
+- `src/storage.rs` handles manifests, binary segment files (`OKFSEG05`), and HNSW graph persistence
+- `src/index.rs` coordinates indexing, updates, deletes, search, and ANN thresholding
 - `src/api.rs` exposes the HTTP server
 - `src/schema.rs` defines request/response DTOs
 - `src/openapi.rs` generates the OpenAPI document
@@ -140,6 +145,13 @@ Example config:
 [fastembed]
 enabled = true
 model = "BAAI/bge-small-en-v1.5"
+
+[ann]
+enabled = true
+threshold = 500
+m = 16
+ef_construction = 64
+ef_search = 32
 
 bind = "127.0.0.1:8787"
 index = "./okf-index"

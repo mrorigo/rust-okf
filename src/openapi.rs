@@ -19,6 +19,7 @@ use utoipa::OpenApi;
             SearchRequest,
             SearchResponse,
             SearchModeRequest,
+            crate::query::QueryFilter,
             DocumentInput,
             DeleteRequest,
             StatusResponse

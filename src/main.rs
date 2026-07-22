@@ -45,6 +45,14 @@ enum Commands {
         mode: String,
         #[arg(long, default_value_t = 10)]
         top_k: usize,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long)]
+        filter_type: Vec<String>,
+        #[arg(long)]
+        filter_tag: Vec<String>,
+        #[arg(long)]
+        filter_path: Option<String>,
     },
     Serve {
         #[arg(long)]
@@ -102,14 +110,39 @@ async fn main() -> anyhow::Result<()> {
             }
             info!(logical_keys = ?logical_key, doc_ids = ?doc_id, "applied deletions");
         }
-        Commands::Search { query, mode, top_k } => {
+        Commands::Search {
+            query,
+            mode,
+            top_k,
+            offset,
+            filter_type,
+            filter_tag,
+            filter_path,
+        } => {
             let mode = match mode.as_str() {
                 "lexical" => SearchMode::Lexical,
                 "vector" => SearchMode::Vector,
                 _ => SearchMode::Hybrid,
             };
-            let (results, plan) = index.search(&query, mode, top_k)?;
-            println!("{}", serde_json::to_string_pretty(&results)?);
+            let filter =
+                if !filter_type.is_empty() || !filter_tag.is_empty() || filter_path.is_some() {
+                    Some(rust_okf::QueryFilter {
+                        types: filter_type,
+                        tags: filter_tag,
+                        concept_path_prefix: filter_path,
+                    })
+                } else {
+                    None
+                };
+            let (results, plan, total_hits) =
+                index.search_advanced(&query, mode, top_k, offset, filter.as_ref())?;
+            let output = serde_json::json!({
+                "results": results,
+                "total_hits": total_hits,
+                "offset": offset,
+                "top_k": top_k,
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
             eprintln!("{}", serde_json::to_string_pretty(&plan)?);
         }
         Commands::Serve { bind } => {

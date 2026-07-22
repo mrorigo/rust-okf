@@ -12,6 +12,8 @@ pub enum SearchModeRequest {
     Hybrid,
 }
 
+pub use crate::query::QueryFilter;
+
 /// Search request payload.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SearchRequest {
@@ -20,6 +22,10 @@ pub struct SearchRequest {
     pub mode: Option<SearchModeRequest>,
     #[serde(default)]
     pub top_k: Option<usize>,
+    #[serde(default)]
+    pub offset: Option<usize>,
+    #[serde(default)]
+    pub filter: Option<QueryFilter>,
 }
 
 /// Search response payload.
@@ -27,6 +33,9 @@ pub struct SearchRequest {
 pub struct SearchResponse {
     pub results: Vec<SearchResult>,
     pub plan: QueryPlan,
+    pub total_hits: usize,
+    pub offset: usize,
+    pub top_k: usize,
 }
 
 /// Document ingestion payload.

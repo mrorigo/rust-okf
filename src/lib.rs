@@ -19,3 +19,4 @@ pub use embedding::{EmbeddingProvider, MockEmbeddingProvider};
 pub use index::{open_index, Index, IndexConfig, IndexError, SearchMode};
 pub use okf::{load_bundle, OkfDocument, OkfDocumentBuilder};
 pub use openapi::ApiDoc;
+pub use query::QueryFilter;

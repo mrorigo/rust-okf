@@ -85,8 +85,10 @@ pub async fn search(
             }),
         )
     })?;
-    let (results, plan) = index
-        .search(&req.query, mode, req.top_k.unwrap_or(10))
+    let top_k = req.top_k.unwrap_or(10);
+    let offset = req.offset.unwrap_or(0);
+    let (results, plan, total_hits) = index
+        .search_advanced(&req.query, mode, top_k, offset, req.filter.as_ref())
         .map_err(|err| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -95,7 +97,13 @@ pub async fn search(
                 }),
             )
         })?;
-    Ok(Json(SearchResponse { results, plan }))
+    Ok(Json(SearchResponse {
+        results,
+        plan,
+        total_hits,
+        offset,
+        top_k,
+    }))
 }
 
 fn build_document(doc: DocumentInput) -> crate::okf::OkfDocument {

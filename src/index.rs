@@ -2,7 +2,7 @@
 use crate::bm25::{Bm25Config, Bm25Index};
 use crate::embedding::EmbeddingProvider;
 use crate::okf::OkfDocument;
-use crate::query::{rrf_fuse, QueryPlan, SearchResult};
+use crate::query::{rrf_fuse, QueryFilter, QueryPlan, SearchResult};
 use crate::storage::{
     results_from_docs, IndexStorage, Manifest, SegmentFile, SegmentMetadata, SegmentView,
 };
@@ -185,6 +185,19 @@ impl Index {
         mode: SearchMode,
         top_k: usize,
     ) -> Result<(Vec<SearchResult>, QueryPlan)> {
+        let (results, plan, _) = self.search_advanced(query, mode, top_k, 0, None)?;
+        Ok((results, plan))
+    }
+
+    /// Searches the index with pagination (offset & top_k) and optional metadata filtering.
+    pub fn search_advanced(
+        &self,
+        query: &str,
+        mode: SearchMode,
+        top_k: usize,
+        offset: usize,
+        filter: Option<&QueryFilter>,
+    ) -> Result<(Vec<SearchResult>, QueryPlan, usize)> {
         let query_embedding = if matches!(mode, SearchMode::Vector | SearchMode::Hybrid) {
             self.embedding_provider
                 .embed(&[query.to_string()])?
@@ -194,39 +207,39 @@ impl Index {
             None
         };
 
+        let mut valid_doc_ids = HashSet::new();
         let mut lexical_map: HashMap<String, f32> = HashMap::new();
         let mut vector_map: HashMap<String, f32> = HashMap::new();
         let mut all_docs = Vec::new();
 
         for segment in &self.segments {
-            all_docs.extend(
-                segment
-                    .document_views()
-                    .into_iter()
-                    .filter(|doc| {
-                        !self
-                            .manifest
-                            .tombstones
-                            .iter()
-                            .any(|dead| dead == doc.doc_id().unwrap_or_default())
-                    })
-                    .map(|doc| doc.to_owned()),
-            );
-            if matches!(mode, SearchMode::Lexical | SearchMode::Hybrid) {
-                for (doc_id, score) in segment.bm25().score(query) {
-                    if self.manifest.tombstones.iter().any(|dead| dead == &doc_id) {
+            for doc in segment.document_views() {
+                let doc_id = doc.doc_id().unwrap_or_default();
+                if self.manifest.tombstones.iter().any(|dead| dead == doc_id) {
+                    continue;
+                }
+                if let Some(filter) = filter {
+                    if !matches_filter(&doc, filter) {
                         continue;
                     }
-                    *lexical_map.entry(doc_id).or_default() += score;
+                }
+                valid_doc_ids.insert(doc_id.to_string());
+                all_docs.push(doc.to_owned());
+            }
+
+            if matches!(mode, SearchMode::Lexical | SearchMode::Hybrid) {
+                for (doc_id, score) in segment.bm25().score(query) {
+                    if valid_doc_ids.contains(&doc_id) {
+                        *lexical_map.entry(doc_id).or_default() += score;
+                    }
                 }
             }
             if let Some(query_embedding) = &query_embedding {
                 let scores = cosine_scores(query_embedding, segment);
                 for (doc_id, score) in scores {
-                    if self.manifest.tombstones.iter().any(|dead| dead == &doc_id) {
-                        continue;
+                    if valid_doc_ids.contains(&doc_id) {
+                        *vector_map.entry(doc_id).or_default() += score;
                     }
-                    *vector_map.entry(doc_id).or_default() += score;
                 }
             }
         }
@@ -238,16 +251,19 @@ impl Index {
             SearchMode::Vector => vector_order.clone(),
             SearchMode::Hybrid => rrf_fuse(&lexical_order, &vector_order, self.config.rrf_k),
         };
-        let mut results = results_from_docs(&all_docs, &lexical_map, &vector_map, &fused, query);
-        results.truncate(top_k);
+        let results = results_from_docs(&all_docs, &lexical_map, &vector_map, &fused, query);
+        let total_hits = results.len();
+        let paginated = results.into_iter().skip(offset).take(top_k).collect();
+
         Ok((
-            results,
+            paginated,
             QueryPlan {
                 query: query.to_string(),
                 lexical_candidates: lexical_order,
                 vector_candidates: vector_order,
                 fused,
             },
+            total_hits,
         ))
     }
 
@@ -268,6 +284,37 @@ impl Index {
         self.segments = vec![rebuilt];
         Ok(())
     }
+}
+
+fn matches_filter(
+    doc: &crate::storage::DocumentView<'_>,
+    filter: &crate::query::QueryFilter,
+) -> bool {
+    if !filter.types.is_empty() {
+        let doc_type = doc.type_name().unwrap_or_default();
+        if !filter
+            .types
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(doc_type))
+        {
+            return false;
+        }
+    }
+    if !filter.tags.is_empty() {
+        let doc_tags = doc.tags();
+        for tag in &filter.tags {
+            if !doc_tags.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
+                return false;
+            }
+        }
+    }
+    if let Some(prefix) = &filter.concept_path_prefix {
+        let concept_path = doc.concept_path().unwrap_or_default();
+        if !concept_path.starts_with(prefix) {
+            return false;
+        }
+    }
+    true
 }
 
 fn cosine_scores(query: &[f32], segment: &SegmentView) -> Vec<(String, f32)> {

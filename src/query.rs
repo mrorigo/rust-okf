@@ -3,6 +3,20 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
+/// Structured metadata filter criteria for search queries.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema, PartialEq, Eq)]
+pub struct QueryFilter {
+    /// Document types to match (e.g. ["Metric", "Table"]). If empty, matches all types.
+    #[serde(default)]
+    pub types: Vec<String>,
+    /// Tags that must all be present on the document. If empty, no tag requirement is enforced.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Prefix filter on concept_path (e.g. "tables/"). If None, matches all concept paths.
+    #[serde(default)]
+    pub concept_path_prefix: Option<String>,
+}
+
 /// Query execution trace.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct QueryPlan {

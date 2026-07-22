@@ -270,3 +270,107 @@ fn reindexing_deleted_doc_clears_tombstone() {
     let (results_after_reindex, _) = index.search("orders", SearchMode::Hybrid, 10).unwrap();
     assert_eq!(results_after_reindex.len(), 1);
 }
+
+#[test]
+fn search_filters_by_type_tag_and_prefix() {
+    use rust_okf::QueryFilter;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let index_dir = tmp.path().join("index");
+    let bundle = tmp.path().join("bundle");
+    fs::create_dir_all(bundle.join("tables")).unwrap();
+    fs::create_dir_all(bundle.join("metrics")).unwrap();
+    fs::create_dir_all(&index_dir).unwrap();
+
+    let mut index = open_index(&index_dir, Box::new(MockEmbeddingProvider::new(16))).unwrap();
+    let doc1 = OkfDocumentBuilder::new(&bundle, bundle.join("metrics/orders.md"))
+        .frontmatter_value("type", "Metric")
+        .frontmatter_value("title", "Orders Metric")
+        .frontmatter_value("tags", vec!["sales", "finance"])
+        .body("Orders completed count")
+        .build();
+    let doc2 = OkfDocumentBuilder::new(&bundle, bundle.join("tables/orders.md"))
+        .frontmatter_value("type", "Table")
+        .frontmatter_value("title", "Orders Table")
+        .frontmatter_value("tags", vec!["sales", "raw"])
+        .body("Orders data table")
+        .build();
+
+    index.index_documents(vec![doc1, doc2]).unwrap();
+
+    // Filter by type
+    let filter_type = QueryFilter {
+        types: vec!["Metric".to_string()],
+        ..Default::default()
+    };
+    let (results, _, total) = index
+        .search_advanced("orders", SearchMode::Hybrid, 10, 0, Some(&filter_type))
+        .unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(results[0].type_name, "Metric");
+
+    // Filter by tag
+    let filter_tag = QueryFilter {
+        tags: vec!["finance".to_string()],
+        ..Default::default()
+    };
+    let (results, _, total) = index
+        .search_advanced("orders", SearchMode::Hybrid, 10, 0, Some(&filter_tag))
+        .unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(results[0].title.as_deref(), Some("Orders Metric"));
+
+    // Filter by concept path prefix
+    let filter_prefix = QueryFilter {
+        concept_path_prefix: Some("tables/".to_string()),
+        ..Default::default()
+    };
+    let (results, _, total) = index
+        .search_advanced("orders", SearchMode::Hybrid, 10, 0, Some(&filter_prefix))
+        .unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(results[0].concept_path, "tables/orders");
+}
+
+#[test]
+fn search_pagination_offset_and_top_k() {
+    let tmp = tempfile::tempdir().unwrap();
+    let index_dir = tmp.path().join("index");
+    let bundle = tmp.path().join("bundle");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::create_dir_all(&index_dir).unwrap();
+
+    let mut index = open_index(&index_dir, Box::new(MockEmbeddingProvider::new(16))).unwrap();
+    let mut docs = Vec::new();
+    for i in 1..=5 {
+        docs.push(
+            OkfDocumentBuilder::new(&bundle, bundle.join(format!("doc{i}.md")))
+                .frontmatter_value("type", "Metric")
+                .frontmatter_value("title", format!("Item {i}"))
+                .body(format!("Common search query text item number {i}"))
+                .build(),
+        );
+    }
+    index.index_documents(docs).unwrap();
+
+    // Page 1: top_k = 2, offset = 0
+    let (page1, _, total) = index
+        .search_advanced("item", SearchMode::Hybrid, 2, 0, None)
+        .unwrap();
+    assert_eq!(total, 5);
+    assert_eq!(page1.len(), 2);
+
+    // Page 2: top_k = 2, offset = 2
+    let (page2, _, total2) = index
+        .search_advanced("item", SearchMode::Hybrid, 2, 2, None)
+        .unwrap();
+    assert_eq!(total2, 5);
+    assert_eq!(page2.len(), 2);
+    assert_ne!(page1[0].doc_id, page2[0].doc_id);
+
+    // Page 3: top_k = 2, offset = 4 (only 1 remaining)
+    let (page3, _, _) = index
+        .search_advanced("item", SearchMode::Hybrid, 2, 4, None)
+        .unwrap();
+    assert_eq!(page3.len(), 1);
+}

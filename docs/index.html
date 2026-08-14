@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="rust-okf — a fast, Rust-native retrieval engine for OKF knowledge bundles.">
+  <title>rust-okf / retrieval with teeth</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600;9..144,700;9..144,800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    @layer reset, base, components, utilities;
+
+    @layer reset {
+      *, *::before, *::after { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body, h1, h2, h3, p, ul, pre { margin: 0; }
+      button, input { font: inherit; }
+    }
+
+    @layer base {
+      :root {
+        --ink: oklch(17% 0.04 260);
+        --paper: oklch(94% 0.025 285);
+        --violet: oklch(70% 0.24 305);
+        --lavender: oklch(88% 0.12 305);
+        --blue: oklch(51% 0.23 259);
+        --orange: oklch(72% 0.19 49);
+        --pink: oklch(67% 0.25 345);
+        --cyan: oklch(78% 0.16 193);
+        --line: oklch(17% 0.04 260 / 0.25);
+        --display: "Fraunces", Georgia, serif;
+        --mono: "DM Mono", "SFMono-Regular", monospace;
+      }
+
+      body {
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--mono);
+        overflow-x: hidden;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: .15;
+        z-index: 20;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.32'/%3E%3C/svg%3E");
+        mix-blend-mode: multiply;
+      }
+
+      a { color: inherit; text-decoration: none; }
+      ::selection { background: var(--pink); color: var(--paper); }
+    }
+
+    @layer components {
+      .shell { width: min(1240px, calc(100% - 40px)); margin-inline: auto; }
+      .topbar { display: flex; justify-content: space-between; align-items: center; padding: 22px 0; border-bottom: 2px solid var(--ink); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; }
+      .brand { font-weight: 700; display: flex; gap: 10px; align-items: center; }
+      .brand-mark { display: grid; place-items: center; width: 28px; height: 28px; background: var(--ink); color: var(--lavender); border-radius: 50%; font-size: 15px; }
+      .nav { display: flex; gap: 24px; }
+      .nav a { border-bottom: 1px solid transparent; transition: border-color .2s, color .2s; }
+      .nav a:hover { color: var(--blue); border-color: currentColor; }
+
+      .hero { position: relative; min-height: 700px; padding: 90px 0 110px; display: grid; grid-template-columns: 1.05fr .95fr; gap: 60px; align-items: center; }
+      .hero::before { content: ""; position: absolute; width: 420px; height: 420px; border-radius: 50%; background: var(--violet); filter: blur(1px); top: 30px; left: -180px; z-index: -1; }
+      .eyebrow { display: inline-flex; align-items: center; gap: 9px; color: var(--blue); font-size: 12px; text-transform: uppercase; letter-spacing: .18em; font-weight: 700; }
+      .eyebrow::before { content: ""; width: 10px; height: 10px; background: var(--orange); transform: rotate(45deg); }
+      h1 { font-family: var(--display); font-size: clamp(66px, 10.5vw, 146px); line-height: .9; letter-spacing: -.045em; max-width: 850px; margin: 22px 0 30px; font-weight: 800; }
+      h1 em { color: var(--blue); font-style: normal; margin-left: .12em; }
+      .hero-copy { max-width: 570px; font-size: clamp(16px, 2vw, 21px); line-height: 1.5; }
+      .hero-copy strong { background: var(--lavender); padding: 0 .15em; }
+      .hero-actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 35px; }
+      .button { border: 2px solid var(--ink); padding: 14px 19px; text-transform: uppercase; font-size: 12px; letter-spacing: .12em; font-weight: 700; box-shadow: 5px 5px 0 var(--ink); transition: transform .15s, box-shadow .15s; }
+      .button:hover { transform: translate(3px, 3px); box-shadow: 2px 2px 0 var(--ink); }
+      .button.primary { background: var(--blue); color: var(--paper); }
+      .button.secondary { background: var(--orange); }
+
+      .terminal { position: relative; background: var(--ink); color: var(--lavender); border: 2px solid var(--ink); box-shadow: 14px 14px 0 var(--pink); transform: rotate(2deg); }
+      .terminal::after { content: "LIVE RETRIEVAL"; position: absolute; top: -18px; right: 20px; background: var(--orange); color: var(--ink); padding: 6px 10px; font-size: 10px; font-weight: 700; letter-spacing: .14em; transform: rotate(-5deg); }
+      .terminal-bar { display: flex; justify-content: space-between; padding: 12px 15px; border-bottom: 1px solid oklch(91% .04 91 / .35); color: var(--paper); font-size: 11px; }
+      .dots { display: flex; gap: 5px; }
+      .dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--pink); }
+      .dots i:nth-child(2) { background: var(--orange); }.dots i:nth-child(3) { background: var(--violet); }
+      .terminal-body { padding: 25px; min-height: 360px; font-size: 13px; line-height: 1.7; }
+      .prompt { color: var(--cyan); }.command { color: var(--paper); }.muted { color: oklch(80% .04 260); }.result { border-left: 3px solid var(--orange); padding-left: 13px; margin: 17px 0; }.result b { color: var(--lavender); }.result small { color: var(--cyan); }
+      .cursor { display: inline-block; width: 8px; height: 1.1em; vertical-align: -.2em; background: var(--lavender); animation: blink 1s steps(2) infinite; }
+      @keyframes blink { 50% { opacity: 0; } }
+
+      .ticker { background: var(--blue); color: var(--lavender); border-block: 2px solid var(--ink); overflow: hidden; white-space: nowrap; transform: rotate(-1.2deg) scale(1.02); }
+      .ticker-track { display: inline-flex; gap: 32px; padding: 15px 0; animation: marquee 24s linear infinite; font-size: 13px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+      .ticker-track span::after { content: "✳"; color: var(--orange); margin-left: 32px; }
+      @keyframes marquee { to { transform: translateX(-50%); } }
+
+      .manifesto { padding: 150px 0 120px; display: grid; grid-template-columns: .8fr 1.2fr; gap: 80px; }
+      .section-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: .2em; color: var(--pink); font-weight: 700; }
+      .manifesto h2 { font-family: var(--display); font-size: clamp(45px, 6vw, 82px); line-height: .92; letter-spacing: -.06em; }
+      .manifesto-content { border-top: 2px solid var(--ink); padding-top: 20px; font-size: 19px; line-height: 1.55; }
+      .manifesto-content p + p { margin-top: 20px; }
+      .manifesto-content mark { background: var(--orange); color: var(--ink); padding: 0 3px; }
+
+      .system { background: var(--ink); color: var(--paper); padding: 100px 0; position: relative; }
+      .system::before { content: "INDEX / 0.3.0"; position: absolute; right: 4vw; top: 35px; color: var(--violet); font-size: 11px; letter-spacing: .18em; }
+      .system-grid { display: grid; grid-template-columns: .8fr 1.2fr; gap: 80px; align-items: start; }
+      .system h2 { font-family: var(--display); font-size: clamp(44px, 6vw, 76px); line-height: .9; letter-spacing: -.06em; color: var(--lavender); }
+      .system-intro { color: oklch(80% .04 91); line-height: 1.6; margin-top: 25px; max-width: 370px; }
+      .architecture { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: oklch(91% .04 91 / .35); border: 1px solid oklch(91% .04 91 / .35); }
+      .arch-card { padding: 25px; min-height: 150px; background: var(--ink); transition: background .2s, color .2s; }
+      .arch-card:hover { background: var(--violet); color: var(--ink); }
+      .arch-card:nth-child(2):hover { background: var(--orange); }.arch-card:nth-child(3):hover { background: var(--cyan); }.arch-card:nth-child(4):hover { background: var(--pink); }
+      .arch-number { font-size: 11px; opacity: .65; }.arch-card h3 { font-family: var(--display); font-size: 28px; margin: 24px 0 8px; }.arch-card p { font-size: 12px; line-height: 1.5; opacity: .75; }
+
+      .storage-copy .section-kicker { color: var(--blue); }
+      .storage-grid { display: grid; grid-template-columns: .9fr 1.1fr; gap: 80px; align-items: center; }
+      .storage-copy h2 { font-family: var(--display); font-size: clamp(48px, 6.5vw, 88px); line-height: .9; letter-spacing: -.055em; margin-top: 14px; }
+      .storage-copy p:not(.storage-note) { max-width: 480px; margin-top: 28px; font-size: 17px; line-height: 1.6; }
+      .storage-note { margin-top: 32px; color: var(--blue); font-size: 11px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; }
+      .storage-diagram { position: relative; min-height: 440px; padding: 36px; background: var(--paper); border: 2px solid var(--ink); box-shadow: 12px 12px 0 var(--blue); }
+      .storage-diagram::before { content: "STORAGE / SEGMENTS"; position: absolute; top: 14px; left: 18px; color: var(--pink); font-size: 10px; letter-spacing: .16em; }
+      .storage-node { position: relative; z-index: 1; display: flex; flex-direction: column; width: 220px; padding: 15px 18px; border: 2px solid var(--ink); background: var(--paper); box-shadow: 5px 5px 0 var(--ink); }
+      .storage-node span { font-size: 10px; color: var(--pink); letter-spacing: .12em; }.storage-node b { margin-top: 8px; font-family: var(--display); font-size: 25px; letter-spacing: -.03em; }.storage-node small { margin-top: 4px; font-size: 11px; }
+      .node-input { margin: 28px auto 0; background: var(--lavender); }.node-segment { margin: 20px auto 0; background: var(--cyan); }.storage-arrow { width: 2px; height: 20px; margin: 0 auto; color: var(--ink); font-size: 20px; line-height: 18px; }
+      .storage-line { width: 2px; height: 24px; margin: 0 auto; background: var(--ink); }.storage-branches { display: flex; justify-content: center; gap: 70px; position: relative; }.storage-branches::before { content: ""; position: absolute; top: 0; left: calc(50% - 143px); width: 286px; height: 2px; background: var(--ink); }.storage-branches .storage-node { margin-top: 25px; width: 175px; }.node-manifest { background: var(--violet); }.node-journal { background: var(--pink); }.storage-stamp { position: absolute; right: 24px; bottom: 22px; width: 76px; height: 76px; display: grid; place-items: center; border: 2px solid var(--blue); border-radius: 50%; color: var(--blue); font-size: 11px; font-weight: 700; text-align: center; transform: rotate(12deg); }
+      .cta::after { content: "RRF"; position: absolute; font-family: var(--display); font-size: 35vw; line-height: .7; color: var(--violet); right: -7vw; bottom: 25px; z-index: -1; transform: rotate(-12deg); }
+      .cta h2 { max-width: 750px; font-family: var(--display); font-size: clamp(50px, 8vw, 105px); line-height: .88; letter-spacing: -.07em; }
+      .cta h2 span { color: var(--blue); }
+      .install { display: inline-flex; align-items: center; gap: 15px; margin-top: 38px; background: var(--ink); color: var(--lavender); padding: 18px 20px; font-size: 14px; box-shadow: 8px 8px 0 var(--orange); }
+      .install button { cursor: pointer; border: 0; background: var(--orange); color: var(--ink); padding: 7px 9px; font-size: 11px; font-weight: 700; }
+
+      footer { border-top: 2px solid var(--ink); padding: 24px 0; display: flex; justify-content: space-between; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; }
+
+      @media (max-width: 800px) {
+        .shell { width: min(100% - 28px, 620px); }
+        .nav { gap: 12px; }.nav a:nth-child(2) { display: none; }
+        .hero, .manifesto, .system-grid, .storage-grid { grid-template-columns: 1fr; gap: 50px; }
+        .hero { padding-top: 70px; min-height: auto; }.terminal { transform: rotate(0); }.terminal::after { right: 10px; }
+        .manifesto { padding: 100px 0 80px; }.system, .storage { padding: 80px 0; }.architecture { grid-template-columns: 1fr; }.storage-diagram { padding: 30px 14px; }.storage-branches { gap: 16px; }.storage-branches::before { left: calc(50% - 96px); width: 192px; }.storage-branches .storage-node { width: 145px; }.cta { padding: 90px 0; }
+        footer { flex-direction: column; gap: 12px; }
+      }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+    }
+  </style>
+</head>
+<body>
+  <header class="shell topbar">
+    <a class="brand" href="#top"><span class="brand-mark">⌁</span> rust-okf</a>
+    <nav class="nav" aria-label="Main navigation">
+      <a href="#engine">engine</a>
+      <a href="../README.md">docs</a>
+      <a href="https://github.com/origo/rust-okf">github ↗</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="shell hero">
+      <div>
+        <div class="eyebrow">Rust-native retrieval engine</div>
+        <h1>Make your<br><em>knowledge</em><br>searchable.</h1>
+        <p class="hero-copy">The sharp little engine for <strong>OKF knowledge bundles</strong>. Markdown in. Fast lexical, vector, or hybrid retrieval out. No cloud-shaped mystery meat.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="../README.md">Read the docs ↗</a>
+          <a class="button secondary" href="#install">Start building</a>
+        </div>
+      </div>
+      <div class="terminal" aria-label="Example rust-okf search output">
+        <div class="terminal-bar"><span class="dots"><i></i><i></i><i></i></span><span>okf / query</span><span>● online</span></div>
+        <div class="terminal-body">
+          <div><span class="prompt">$</span> <span class="command">okf search "mcp"</span></div>
+          <div class="muted">mode: hybrid · 14 results · showing 3</div>
+          <div class="result"><b>1. MCP Configuration</b><br><small>concepts/mcp/configuration</small><br>Configure MCP servers, transports, and capabilities.<br><span class="muted">score: 0.0321</span></div>
+          <div class="result"><b>2. MCP Server</b><br><small>concepts/mcp/server</small><br>An MCP server exposes tools and resources to agents.<br><span class="muted">score: 0.0298</span></div>
+          <div class="result"><b>3. Tool Protocol</b><br><small>concepts/mcp/tools</small><br>Typed interfaces for useful, composable actions.<br><span class="muted">score: 0.0284</span></div>
+          <div><span class="prompt">$</span> <span class="cursor"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="ticker" aria-hidden="true"><div class="ticker-track"><span>BM25</span><span>FastEmbed</span><span>RRF fusion</span><span>Immutable segments</span><span>Recovery journals</span><span>BM25</span><span>FastEmbed</span><span>RRF fusion</span><span>Immutable segments</span><span>Recovery journals</span></div></div>
+
+    <section class="shell manifesto">
+      <div><div class="section-kicker">01 / The premise</div><h2>Search should feel like a superpower.</h2></div>
+      <div class="manifesto-content"><p>Most knowledge systems make you choose between <mark>keyword recall</mark> and semantic vibes. rust-okf gives you both: BM25 for the exact stuff, embeddings for the adjacent stuff, and Reciprocal Rank Fusion to bring the useful stuff to the top.</p><p>It is deliberately small, deliberately local, and built in Rust for the moments when your index needs to be fast, safe, and still yours.</p></div>
+    </section>
+
+    <section id="engine" class="system">
+      <div class="shell system-grid">
+        <div><div class="section-kicker">02 / Under the hood</div><h2>A small engine.<br>Big signal.</h2><p class="system-intro">A manifest-driven store keeps ingestion, ranking, persistence, and recovery cleanly separated. Less magic. More control.</p></div>
+        <div class="architecture">
+          <article class="arch-card"><span class="arch-number">01</span><h3>Parse</h3><p>Markdown with YAML frontmatter becomes normalized OKF documents.</p></article>
+          <article class="arch-card"><span class="arch-number">02</span><h3>Embed</h3><p>FastEmbed-backed vectors make semantic retrieval local and fast.</p></article>
+          <article class="arch-card"><span class="arch-number">03</span><h3>Rank</h3><p>Lexical and dense candidates fuse into one useful ranked list.</p></article>
+          <article class="arch-card"><span class="arch-number">04</span><h3>Recover</h3><p>Immutable segments, manifests, tombstones, and journals survive rough landings.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="storage">
+      <div class="shell storage-grid">
+        <div class="storage-copy">
+          <div class="section-kicker">03 / The storage engine</div>
+          <h2>Writes land.<br>Nothing gets lost.</h2>
+          <p>rust-okf treats knowledge like a system that deserves a paper trail. Every update becomes an immutable segment. The manifest points at what is live. The journal remembers what happened when the lights go out.</p>
+          <p class="storage-note">append-only by default / recoverable by design</p>
+        </div>
+        <div class="storage-diagram" aria-label="Storage engine flow diagram">
+          <div class="storage-node node-input"><span>01</span><b>WRITE</b><small>new documents</small></div>
+          <div class="storage-arrow">↓</div>
+          <div class="storage-node node-segment"><span>02</span><b>SEGMENT</b><small>immutable data</small></div>
+          <div class="storage-line"></div>
+          <div class="storage-branches">
+            <div class="storage-node node-manifest"><span>03A</span><b>MANIFEST</b><small>live truth</small></div>
+            <div class="storage-node node-journal"><span>03B</span><b>JOURNAL</b><small>recovery trail</small></div>
+          </div>
+          <div class="storage-stamp">SAFE<br>COMMIT</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="install" class="shell cta">
+      <div class="section-kicker">04 / Your next index</div>
+      <h2>Stop losing the good stuff.<br><span>Start retrieving it.</span></h2>
+      <div class="install"><code>cargo install rust-okf</code><button id="copy" type="button">COPY</button></div>
+    </section>
+  </main>
+
+  <footer class="shell"><span>rust-okf / v0.3.0</span><span>built for useful knowledge</span></footer>
+
+  <script>
+    const copyButton = document.querySelector('#copy');
+    copyButton.addEventListener('click', async () => {
+      await navigator.clipboard.writeText('cargo install rust-okf');
+      copyButton.textContent = 'COPIED';
+      setTimeout(() => { copyButton.textContent = 'COPY'; }, 1400);
+    });
+  </script>
+</body>
+</html>

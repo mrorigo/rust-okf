@@ -12,7 +12,10 @@
 `rust-okf` is a Rust-native index and query engine for OKF bundles. It is built for speed, shaped for real data, and tuned for hybrid retrieval without the usual index-engine bloat.
 
 > [!NOTE]
-> **v0.2.0 Release Highlights**:
+> **v0.3.0 Release Highlights**:
+> - **Human-Friendly CLI Search**: `okf search` now defaults to concise, readable result summaries instead of dumping the full query plan.
+> - **Machine-Readable Search Output**: Use `--json` for compact result JSON and `--explain` for detailed ranking diagnostics on stderr.
+> - **Separated Result and Diagnostic Streams**: Combine `--json --explain` safely in scripts without mixing result data and query-plan output.
 > - **HNSW ANN Vector Indexing**: Sub-linear $O(\log N)$ vector retrieval via pure Rust Hierarchical Navigable Small World (HNSW) graphs persisted directly in memory-mapped segment files (`OKFSEG05`).
 > - **Metadata & Faceted Filtering**: Filter search queries by document `types`, `tags`, and `concept_path_prefix`.
 > - **Pagination & Offset Support**: Paginate search results with `offset` / `--offset` and receive `total_hits` in search responses.
@@ -187,8 +190,13 @@ cargo run -- delete --logical-key <bundle>::<concept-path>
 ### Search
 
 ```bash
-cargo run -- search "orders completed" --mode hybrid --top-k 10 --offset 0 --filter-type Metric --filter-tag sales
+cargo run -- search "orders completed"
+cargo run -- search "orders completed" --json
+cargo run -- search "orders completed" --explain
+cargo run -- search "orders completed" --json --explain
 ```
+
+By default, the CLI prints a concise human-readable result list. Use `--json` for a compact machine-readable result envelope on stdout. Use `--explain` to print the detailed lexical, vector, and fused query plan on stderr. Combining both flags keeps results and diagnostics in separate streams.
 
 Search options:
 
@@ -198,6 +206,8 @@ Search options:
 - `--filter-type`: filter by document type (can be specified multiple times)
 - `--filter-tag`: filter by tag (can be specified multiple times)
 - `--filter-path`: concept path prefix filter
+- `--json`: emit compact machine-readable results on stdout
+- `--explain`: emit the query execution plan on stderr
 
 ### Run the HTTP API
 

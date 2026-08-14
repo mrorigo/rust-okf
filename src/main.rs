@@ -1,5 +1,6 @@
 /// Rust guideline compliant 2026-06-17
 use clap::{Parser, Subcommand};
+use rust_okf::query::SearchResult;
 use rust_okf::{
     load_bundle, open_index, serve_http, AppConfig, FastEmbedProvider, MockEmbeddingProvider,
     SearchMode,
@@ -53,12 +54,70 @@ enum Commands {
         filter_tag: Vec<String>,
         #[arg(long)]
         filter_path: Option<String>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        explain: bool,
     },
     Serve {
         #[arg(long)]
         bind: Option<String>,
     },
     Compact,
+}
+
+fn print_human_results(
+    query: &str,
+    mode: SearchMode,
+    results: &[SearchResult],
+    total_hits: usize,
+    offset: usize,
+) {
+    println!("Search: {query}");
+    println!(
+        "Mode: {} · {total_hits} results · showing {}",
+        mode_name(mode),
+        results.len()
+    );
+
+    if results.is_empty() {
+        println!("No matching documents found.");
+        return;
+    }
+
+    let first = offset + 1;
+    let last = offset + results.len();
+    println!("Results {first}-{last} of {total_hits}:\n");
+    for (index, result) in results.iter().enumerate() {
+        println!(
+            "{}. {}",
+            offset + index + 1,
+            result.title.as_deref().unwrap_or("Untitled")
+        );
+        println!("   {}", result.concept_path);
+        if !result.snippet.trim().is_empty() {
+            println!("   {}", compact_snippet(&result.snippet));
+        }
+        println!("   score: {:.4}\n", result.fused_score);
+    }
+}
+
+fn mode_name(mode: SearchMode) -> &'static str {
+    match mode {
+        SearchMode::Lexical => "lexical",
+        SearchMode::Vector => "vector",
+        SearchMode::Hybrid => "hybrid",
+    }
+}
+
+fn compact_snippet(snippet: &str) -> String {
+    const MAX_LENGTH: usize = 200;
+    let compact = snippet.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= MAX_LENGTH {
+        return compact;
+    }
+    let truncated: String = compact.chars().take(MAX_LENGTH - 1).collect();
+    format!("{truncated}…")
 }
 
 fn provider_from_cli(mock: bool) -> anyhow::Result<Box<dyn rust_okf::EmbeddingProvider>> {
@@ -118,6 +177,8 @@ async fn main() -> anyhow::Result<()> {
             filter_type,
             filter_tag,
             filter_path,
+            json,
+            explain,
         } => {
             let mode = match mode.as_str() {
                 "lexical" => SearchMode::Lexical,
@@ -137,13 +198,19 @@ async fn main() -> anyhow::Result<()> {
             let (results, plan, total_hits) =
                 index.search_advanced(&query, mode, top_k, offset, filter.as_ref())?;
             let output = serde_json::json!({
-                "results": results,
+                "results": &results,
                 "total_hits": total_hits,
                 "offset": offset,
                 "top_k": top_k,
             });
-            println!("{}", serde_json::to_string_pretty(&output)?);
-            eprintln!("{}", serde_json::to_string_pretty(&plan)?);
+            if json {
+                println!("{}", serde_json::to_string(&output)?);
+            } else {
+                print_human_results(&query, mode, &results, total_hits, offset);
+            }
+            if explain {
+                eprintln!("{}", serde_json::to_string_pretty(&plan)?);
+            }
         }
         Commands::Serve { bind } => {
             let bind = bind.unwrap_or(config.bind);

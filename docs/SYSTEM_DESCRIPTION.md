@@ -381,7 +381,6 @@ The engine is built to provide:
 The current architecture leaves room for future improvements:
 
 - segment compaction policies
-- true ANN search inside segments
 - sharding
 - additional metadata filters
 - alternative embedding providers

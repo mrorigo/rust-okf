@@ -222,15 +222,20 @@ impl Index {
         let mut all_docs = Vec::new();
 
         for segment in &self.segments {
-            for doc in segment.document_views() {
+            let segment_docs = segment.document_views();
+            let eligible: Vec<bool> = segment_docs
+                .iter()
+                .map(|doc| {
+                    let doc_id = doc.doc_id().unwrap_or_default();
+                    !self.manifest.tombstones.iter().any(|dead| dead == doc_id)
+                        && filter.is_none_or(|criteria| matches_filter(doc, criteria))
+                })
+                .collect();
+
+            for (doc, is_eligible) in segment_docs.iter().zip(&eligible) {
                 let doc_id = doc.doc_id().unwrap_or_default();
-                if self.manifest.tombstones.iter().any(|dead| dead == doc_id) {
+                if !is_eligible {
                     continue;
-                }
-                if let Some(filter) = filter {
-                    if !matches_filter(&doc, filter) {
-                        continue;
-                    }
                 }
                 valid_doc_ids.insert(doc_id.to_string());
                 all_docs.push(doc.to_owned());
@@ -244,7 +249,14 @@ impl Index {
                 }
             }
             if let Some(query_embedding) = &query_embedding {
-                let scores = cosine_scores(query_embedding, segment, &self.config.ann);
+                let candidate_limit = top_k.saturating_add(offset).max(1);
+                let scores = cosine_scores(
+                    query_embedding,
+                    segment,
+                    &self.config.ann,
+                    candidate_limit,
+                    &eligible,
+                );
                 for (doc_id, score) in scores {
                     if valid_doc_ids.contains(&doc_id) {
                         *vector_map.entry(doc_id).or_default() += score;
@@ -330,31 +342,48 @@ fn cosine_scores(
     query: &[f32],
     segment: &SegmentView,
     config: &crate::ann::AnnConfig,
+    candidate_limit: usize,
+    eligible: &[bool],
 ) -> Vec<(String, f32)> {
     let docs = segment.document_views();
 
     if config.enabled && docs.len() >= config.threshold {
         if let Some(hnsw) = segment.hnsw() {
             let embeddings = segment.embeddings();
-            let ann_results = hnsw.search(query, docs.len(), &embeddings);
-            return ann_results
+            let ann_results = hnsw.search(query, candidate_limit, &embeddings);
+            let filtered = ann_results
                 .into_iter()
                 .filter_map(|(idx, score)| {
+                    if !eligible.get(idx).copied().unwrap_or(false) {
+                        return None;
+                    }
                     let doc_id = docs.get(idx)?.doc_id()?.to_string();
                     Some((doc_id, score))
                 })
-                .collect();
+                .collect::<Vec<_>>();
+
+            // A filtered ANN beam can contain too few eligible documents. Fall
+            // back to exact scoring so filters and tombstones never reduce the
+            // result set merely because excluded vectors occupied the beam.
+            if filtered.len() >= candidate_limit {
+                return filtered;
+            }
         }
     }
 
     let vectors = segment.embeddings();
     let mut scores = Vec::with_capacity(vectors.len());
     for (idx, vec) in vectors.iter().enumerate() {
+        if !eligible.get(idx).copied().unwrap_or(false) {
+            continue;
+        }
         scores.push((
             docs[idx].doc_id().unwrap_or_default().to_string(),
             cosine_similarity(query, vec),
         ));
     }
+    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scores.truncate(candidate_limit);
     scores
 }
 

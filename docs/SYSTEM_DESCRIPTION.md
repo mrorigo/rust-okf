@@ -22,7 +22,7 @@ Included:
  - Reciprocal Rank Fusion
  - immutable segment storage
  - manifest and journal recovery
- - CLI and HTTP API surface
+ - CLI, HTTP API, and MCP server surfaces
 
 Excluded:
 
@@ -51,6 +51,7 @@ flowchart LR
     M --> N["Ranked results"]
     O["CLI"] --> J
     P["HTTP API"] --> J
+    R["MCP stdio server"] --> J
 ```
 
 The engine keeps the ingestion and query paths separate, but both operate on the same manifest-driven segment store.
@@ -285,6 +286,7 @@ The crate exposes two main interfaces:
 
 - a CLI binary named `okf`
 - an HTTP API with explicit request and response types
+- an MCP server over stdio using the official `rmcp` Rust SDK
 
 ### CLI
 
@@ -297,6 +299,7 @@ The CLI supports:
 - searching
 - compaction
 - serving the HTTP API
+- serving the MCP stdio transport
 
 ### HTTP API
 
@@ -310,6 +313,21 @@ The HTTP layer exposes routes for:
 - OpenAPI schema access
 
 The API types are explicit so integration clients can rely on a stable request/response contract.
+
+### MCP server
+
+The MCP adapter is implemented in `src/mcp.rs` and runs through `okf mcp`. It uses the official `rmcp` SDK and the stdio transport, allowing local MCP clients to launch `okf` as a child process.
+
+The server shares the same `Index` operations as the CLI and HTTP API. Its tools are:
+
+- `search`, supporting lexical, vector, and hybrid modes, pagination, and metadata filters
+- `index_documents`, for indexing client-supplied normalized documents
+- `update_documents`, for replacing documents by logical key
+- `delete_documents`, for deleting by document ID or logical key
+- `compact`, for rewriting live segments
+- `index_status`, for reporting generation, segment, and tombstone counts
+
+The MCP server owns the index behind `Arc<Mutex<Index>>`. This preserves the existing synchronous `Index` API and serializes reads and mutations safely. MCP protocol traffic uses stdout; diagnostics must use stderr. The current MCP surface is local stdio only and does not expose a network listener.
 
 ## Module Responsibilities
 

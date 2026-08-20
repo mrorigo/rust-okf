@@ -43,6 +43,7 @@ The goal is not a toy demo. The goal is a small, sharp engine that can index OKF
 - atomic manifest-driven persistence
 - CLI for indexing and search
 - HTTP API with OpenAPI schema
+- MCP server over stdio for agent tool integration
 
 ## What it does
 
@@ -51,6 +52,7 @@ The goal is not a toy demo. The goal is a small, sharp engine that can index OKF
 - stores hybrid search state and HNSW graphs on disk
 - supports updates and deletes without full rebuilds
 - exposes both a CLI and an HTTP API
+- exposes an MCP server for tools-compatible AI clients
 
 ## Features
 
@@ -81,6 +83,7 @@ cargo run -- serve --bind 127.0.0.1:8787
 - `src/storage.rs` handles manifests, binary segment files (`OKFSEG05`), and HNSW graph persistence
 - `src/index.rs` coordinates indexing, updates, deletes, search, and ANN thresholding
 - `src/api.rs` exposes the HTTP server
+- `src/mcp.rs` exposes the stdio MCP server
 - `src/schema.rs` defines request/response DTOs
 - `src/openapi.rs` generates the OpenAPI document
 
@@ -215,6 +218,48 @@ Search options:
 ```bash
 cargo run -- serve --bind 127.0.0.1:8787
 ```
+
+### Run as an MCP server
+
+`okf mcp` starts an MCP server over standard input and standard output using the official Rust MCP SDK (`rmcp`). This transport is intended for MCP clients that launch local server processes.
+
+```bash
+cargo run -- --config okf.toml mcp
+```
+
+When using a development index or offline embeddings:
+
+```bash
+cargo run -- --config okf.toml --index ./okf-index --mock-embeddings mcp
+```
+
+Configure a local MCP client with the built binary:
+
+```json
+{
+  "mcpServers": {
+    "okf": {
+      "command": "/absolute/path/to/okf",
+      "args": [
+        "--config",
+        "/absolute/path/to/okf.toml",
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+The MCP server exposes these tools:
+
+- `search`: hybrid, lexical, or vector search with pagination and metadata filters
+- `index_documents`: index document payloads supplied by the client
+- `update_documents`: replace documents using their logical keys
+- `delete_documents`: delete by document ID or logical key
+- `compact`: compact live index segments
+- `index_status`: report index generation, segment count, and tombstone count
+
+MCP protocol messages use stdout, so application logs must remain on stderr. The current MCP transport is stdio-only; streamable HTTP MCP is not enabled by this command.
 
 ## HTTP API
 

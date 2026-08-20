@@ -63,6 +63,7 @@ enum Commands {
         #[arg(long)]
         bind: Option<String>,
     },
+    Mcp,
     Compact,
 }
 
@@ -216,6 +217,10 @@ async fn main() -> anyhow::Result<()> {
             let bind = bind.unwrap_or(config.bind);
             info!(bind = %bind, "starting http server");
             serve_http(index, bind).await?;
+        }
+        Commands::Mcp => {
+            info!("starting MCP stdio server");
+            rust_okf::mcp::serve(index).await?;
         }
         Commands::Compact => {
             index.compact()?;

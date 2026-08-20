@@ -7,6 +7,7 @@ pub mod bm25;
 pub mod config;
 pub mod embedding;
 pub mod index;
+pub mod mcp;
 pub mod okf;
 pub mod openapi;
 pub mod query;

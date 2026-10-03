@@ -245,6 +245,97 @@ fn add_is_idempotent_and_does_not_duplicate_scores() {
 }
 
 #[test]
+fn update_skips_unchanged_documents_without_new_segment() {
+    let tmp = tempfile::tempdir().unwrap();
+    let index_dir = tmp.path().join("index");
+    let bundle = tmp.path().join("bundle");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::create_dir_all(&index_dir).unwrap();
+
+    let mut index = open_index(&index_dir, Box::new(MockEmbeddingProvider::new(16))).unwrap();
+    let doc = OkfDocumentBuilder::new(&bundle, bundle.join("a.md"))
+        .frontmatter_value("type", "Metric")
+        .frontmatter_value("title", "Orders")
+        .body("Orders completed by customers")
+        .build();
+    index.update_documents(vec![doc.clone()]).unwrap();
+    let generation = index.manifest().generation;
+    let segment_count = index.manifest().segments.len();
+
+    index.update_documents(vec![doc]).unwrap();
+
+    assert_eq!(index.manifest().generation, generation);
+    assert_eq!(index.manifest().segments.len(), segment_count);
+}
+
+#[test]
+fn update_replaces_changed_document_by_logical_key() {
+    let tmp = tempfile::tempdir().unwrap();
+    let index_dir = tmp.path().join("index");
+    let bundle = tmp.path().join("bundle");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::create_dir_all(&index_dir).unwrap();
+
+    let mut index = open_index(&index_dir, Box::new(MockEmbeddingProvider::new(16))).unwrap();
+    let old_doc = OkfDocumentBuilder::new(&bundle, bundle.join("a.md"))
+        .frontmatter_value("type", "Metric")
+        .frontmatter_value("title", "Orders")
+        .body("old searchable text")
+        .build();
+    let new_doc = OkfDocumentBuilder::new(&bundle, bundle.join("a.md"))
+        .frontmatter_value("type", "Metric")
+        .frontmatter_value("title", "Orders")
+        .body("new searchable text")
+        .build();
+    index.update_documents(vec![old_doc]).unwrap();
+
+    index.update_documents(vec![new_doc.clone()]).unwrap();
+
+    let (results, _) = index
+        .search("new searchable", SearchMode::Lexical, 10)
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].doc_id, new_doc.doc_id);
+    assert_eq!(index.manifest().tombstones.len(), 1);
+}
+
+#[test]
+fn update_compacts_after_segment_threshold() {
+    let tmp = tempfile::tempdir().unwrap();
+    let index_dir = tmp.path().join("index");
+    let bundle = tmp.path().join("bundle");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::create_dir_all(&index_dir).unwrap();
+
+    let mut index = open_index(&index_dir, Box::new(MockEmbeddingProvider::new(16))).unwrap();
+    for version in 0..10 {
+        let doc = OkfDocumentBuilder::new(&bundle, bundle.join("a.md"))
+            .frontmatter_value("title", "Orders")
+            .body(format!("version {version}"))
+            .build();
+        index.update_documents(vec![doc]).unwrap();
+    }
+
+    assert!(index.manifest().segments.len() < 8);
+    assert_eq!(index.manifest().segments.len(), 3);
+    assert_eq!(
+        index
+            .manifest()
+            .segments
+            .iter()
+            .map(|s| s.doc_count)
+            .sum::<usize>(),
+        3
+    );
+    assert_eq!(index.manifest().tombstones.len(), 2);
+    let results = index
+        .search("version 9", SearchMode::Lexical, 10)
+        .unwrap()
+        .0;
+    assert_eq!(results.len(), 1);
+}
+
+#[test]
 fn reindexing_deleted_doc_clears_tombstone() {
     let tmp = tempfile::tempdir().unwrap();
     let index_dir = tmp.path().join("index");

@@ -306,25 +306,25 @@ impl IndexStorage {
 
     /// Compacts live segments into a new segment.
     pub fn compact(&self, segments: &[SegmentView], manifest: &Manifest) -> Result<SegmentEntry> {
-        let live_docs: Vec<OkfDocument> = segments
-            .iter()
-            .flat_map(|segment| {
-                segment
-                    .document_views()
-                    .into_iter()
-                    .map(|doc| doc.to_owned())
-            })
-            .filter(|doc| !manifest.tombstones.iter().any(|dead| dead == &doc.doc_id))
-            .collect();
+        let mut latest_by_key = HashMap::new();
+        for segment in segments {
+            let documents = segment.document_views();
+            let embeddings = segment.embeddings();
+            for (index, doc) in documents.into_iter().enumerate() {
+                let owned = doc.to_owned();
+                if manifest.tombstones.iter().any(|dead| dead == &owned.doc_id) {
+                    continue;
+                }
+                if let Some(embedding) = embeddings.get(index) {
+                    latest_by_key.insert(owned.logical_key.clone(), (owned, embedding.clone()));
+                }
+            }
+        }
+        let (live_docs, embeddings): (Vec<_>, Vec<_>) = latest_by_key.into_values().unzip();
         if live_docs.is_empty() {
             return Err(anyhow!("nothing to compact"));
         }
         let segment_id = format!("compact_{:016x}", manifest.generation + 1);
-        let embeddings = segments
-            .iter()
-            .flat_map(|segment| segment.embeddings().into_iter())
-            .take(live_docs.len())
-            .collect::<Vec<_>>();
         let bm25_pairs: Vec<(String, String)> = live_docs
             .iter()
             .map(|doc| (doc.doc_id.clone(), doc.searchable_text.clone()))

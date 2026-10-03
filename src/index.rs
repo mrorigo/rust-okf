@@ -58,6 +58,7 @@ pub struct Index {
 }
 
 impl Index {
+    const COMPACT_SEGMENT_THRESHOLD: usize = 8;
     /// Opens an index from disk.
     ///
     /// # Arguments
@@ -184,7 +185,40 @@ impl Index {
 
     /// Replaces existing documents with new versions.
     pub fn update_documents(&mut self, docs: Vec<OkfDocument>) -> Result<()> {
-        self.index_documents(docs)
+        if docs.is_empty() {
+            return Ok(());
+        }
+
+        let mut current_by_key = HashMap::new();
+        for segment in &self.segments {
+            for doc in segment.document_views() {
+                let doc_id = doc.doc_id().unwrap_or_default();
+                if self.manifest.tombstones.iter().any(|dead| dead == doc_id) {
+                    continue;
+                }
+                if let Some(logical_key) = doc.logical_key() {
+                    current_by_key.insert(logical_key.to_string(), doc.to_owned());
+                }
+            }
+        }
+
+        let changed = docs
+            .into_iter()
+            .filter(|incoming| {
+                current_by_key
+                    .get(&incoming.logical_key)
+                    .is_none_or(|current| current != incoming)
+            })
+            .collect::<Vec<_>>();
+        if changed.is_empty() {
+            return Ok(());
+        }
+
+        self.index_documents(changed)?;
+        if self.manifest.segments.len() >= Self::COMPACT_SEGMENT_THRESHOLD {
+            self.compact()?;
+        }
+        Ok(())
     }
 
     /// Searches the index.

@@ -1046,14 +1046,34 @@ fn parse_embeddings(
     Ok(embeddings)
 }
 
+/// Moves a byte index backward to the nearest UTF-8 character boundary.
+fn floor_char_boundary(s: &str, mut index: usize) -> usize {
+    index = index.min(s.len());
+    while index > 0 && !s.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+/// Moves a byte index forward to the nearest UTF-8 character boundary.
+fn ceil_char_boundary(s: &str, mut index: usize) -> usize {
+    index = index.min(s.len());
+    while index < s.len() && !s.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
 /// Extracts a short snippet for display in search results.
 pub fn snippet_from_doc(doc: &OkfDocument, query: &str) -> String {
     let lowered = query.to_lowercase();
     let body = &doc.body;
     if let Some(pos) = body.to_lowercase().find(&lowered) {
-        let start = pos.saturating_sub(40);
-        let end = (pos + lowered.len() + 80).min(body.len());
-        return body[start..end].to_string();
+        let start = floor_char_boundary(body, pos.saturating_sub(40));
+        let end = ceil_char_boundary(body, (pos + lowered.len() + 80).min(body.len()));
+        if start <= end {
+            return body[start..end].to_string();
+        }
     }
     body.chars().take(160).collect()
 }
@@ -1087,4 +1107,36 @@ pub fn results_from_docs(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod snippet_tests {
+    use super::*;
+    use crate::okf::OkfDocumentBuilder;
+
+    fn doc_with_body(body: &str) -> OkfDocument {
+        OkfDocumentBuilder::new("bundle", "file").body(body).build()
+    }
+
+    #[test]
+    fn snippet_slices_on_multibyte_char_boundaries() {
+        let body = "ℂ".repeat(200);
+        let doc = doc_with_body(&body);
+        let snippet = snippet_from_doc(&doc, "ℂ");
+        assert!(snippet.contains('ℂ'));
+    }
+
+    #[test]
+    fn snippet_slices_near_multibyte_query_match() {
+        let doc = doc_with_body(&"xℂ".repeat(100));
+        let snippet = snippet_from_doc(&doc, "xℂ");
+        assert!(snippet.contains('ℂ'));
+    }
+
+    #[test]
+    fn snippet_falls_back_without_match() {
+        let doc = doc_with_body(&"ℂ".repeat(500));
+        let snippet = snippet_from_doc(&doc, "nomatch");
+        assert_eq!(snippet.chars().count(), 160);
+    }
 }
